@@ -19,12 +19,15 @@ convertQueue.process(numOfCpus, async (job, done) => {
   console.time(`📹 job convert #${job.id}`)
   const file = await convertToWebmSticker(job.data.fileUrl).catch(done)
 
-  const content = await fs.readFile(file.output, { encoding: 'base64' });
+  if (file) {
+    const content = await fs.readFile(file.output, { encoding: 'base64' });
 
-  done(null, {
-    metadata: file.metadata,
-    content
-  })
+    done(null, {
+      metadata: file.metadata,
+      content
+    })
+  }
+  
   console.timeEnd(`📹 job convert #${job.id}`)
 })
 
