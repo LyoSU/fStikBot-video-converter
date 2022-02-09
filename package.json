@@ -1,0 +1,25 @@
+{
+  "name": "fstikbot-video-converter",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LyoSU/fStikBot-video-converter.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/LyoSU/fStikBot-video-converter/issues"
+  },
+  "homepage": "https://github.com/LyoSU/fStikBot-video-converter#readme",
+  "dependencies": {
+    "bull": "^4.5.1",
+    "dotenv": "^16.0.0",
+    "fluent-ffmpeg": "^2.1.2",
+    "temp": "^0.9.4"
+  }
+}
