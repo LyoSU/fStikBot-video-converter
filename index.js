@@ -5,7 +5,7 @@ const ffmpeg = require('fluent-ffmpeg')
 const temp = require('temp').track()
 const Queue = require('bull')
 
-const numOfCpus = os.cpus().length
+const numOfCpus = process.env.MAX_PROCESS || os.cpus().length
 
 const convertQueue = new Queue('convert', {
   redis: { port: process.env.REDIS_PORT, host: process.env.REDIS_HOST, password: process.env.REDIS_PASSWORD }
@@ -16,7 +16,9 @@ setInterval(() => {
 }, 1000 * 5)
 
 convertQueue.process(numOfCpus, async (job, done) => {
-  console.time(`📹 job convert #${job.id}`)
+  const consoleName = `📹 job convert #${job.id}`
+
+  console.time(consoleName)
   const file = await convertToWebmSticker(job.data.fileUrl).catch(done)
 
   if (file) {
@@ -27,8 +29,8 @@ convertQueue.process(numOfCpus, async (job, done) => {
       content
     })
   }
-  
-  console.timeEnd(`📹 job convert #${job.id}`)
+
+  console.timeEnd(consoleName)
 })
 
 function convertToWebmSticker (input) {
