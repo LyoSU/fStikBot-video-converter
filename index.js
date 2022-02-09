@@ -5,7 +5,7 @@ const ffmpeg = require('fluent-ffmpeg')
 const temp = require('temp').track()
 const Queue = require('bull')
 
-const numOfCpus = process.env.MAX_PROCESS || os.cpus().length
+const numOfCpus = parseInt(process.env.MAX_PROCESS) || os.cpus().length
 
 const convertQueue = new Queue('convert', {
   redis: { port: process.env.REDIS_PORT, host: process.env.REDIS_HOST, password: process.env.REDIS_PASSWORD }
