@@ -12,7 +12,7 @@ const convertQueue = new Queue('convert', {
 })
 
 setInterval(() => {
-  convertQueue.clean(5000)
+  convertQueue.clean(1000 * 60)
 }, 1000 * 5)
 
 convertQueue.process(numOfCpus, async (job, done) => {

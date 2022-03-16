@@ -1,6 +1,6 @@
 {
   "name": "fstikbot-video-converter",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -17,7 +17,7 @@
   },
   "homepage": "https://github.com/LyoSU/fStikBot-video-converter#readme",
   "dependencies": {
-    "bull": "^4.5.1",
+    "bull": "^4.7.0",
     "dotenv": "^16.0.0",
     "fluent-ffmpeg": "^2.1.2",
     "temp": "^0.9.4"
