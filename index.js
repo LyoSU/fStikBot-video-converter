@@ -55,10 +55,11 @@ function convertToWebmSticker (input) {
       .output(output)
       .videoFilters(
         'scale=512:512:force_original_aspect_ratio=decrease',
-        'fps=30'
+        // 'fps=30'
       )
-      .videoBitrate('500k')
+      .videoBitrate('400k')
       .outputOptions(
+        '-crf', '10∂',
         '-c:v', 'libvpx-vp9',
         '-pix_fmt', 'yuva420p'
       )
