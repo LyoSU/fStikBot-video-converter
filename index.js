@@ -59,7 +59,7 @@ function convertToWebmSticker (input) {
       )
       .videoBitrate('400k')
       .outputOptions(
-        '-crf', '10∂',
+        '-crf', '10',
         '-c:v', 'libvpx-vp9',
         '-pix_fmt', 'yuva420p'
       )
