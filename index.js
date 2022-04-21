@@ -33,13 +33,42 @@ convertQueue.process(numOfCpus, async (job, done) => {
   console.timeEnd(consoleName)
 })
 
-function convertToWebmSticker (input) {
+const ffprobePromise = (file) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(file, (err, metadata) => {
+      if (err) {
+        reject(err)
+      } else {
+        resolve(metadata)
+      }
+    })
+  })
+}
+
+async function convertToWebmSticker (input) {
   const output = temp.path({ suffix: '.webm' })
+
+  const meta = await ffprobePromise(input)
+
+  const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
+
+  let fileter = 'scale=512:512:force_original_aspect_ratio=decrease'
+
+  if (videoMeta.codec_name === 'gif' && videoMeta.width < 512 && videoMeta.height < 512) {
+    let scale = ''
+    let height = videoMeta.height
+    if (videoMeta.width < 150 && videoMeta.height < 150) {
+      height = 150
+      scale = 'scale=150:150:force_original_aspect_ratio=decrease:flags=neighbor,'
+    }
+    fileter = scale + `pad=512:${height}:-1:-1:color=black@0`
+  }
 
   return new Promise((resolve, reject) => {
     const process = ffmpeg()
       .input(input)
       .on('error', (error) => {
+        console.error(error.message, input, videoMeta)
         reject(error)
       })
       .on('end', () => {
@@ -54,12 +83,11 @@ function convertToWebmSticker (input) {
       .addInputOptions(['-t 3'])
       .output(output)
       .videoFilters(
-        'scale=512:512:force_original_aspect_ratio=decrease',
+        fileter
         // 'fps=30'
       )
       .videoBitrate('400k')
       .outputOptions(
-        '-crf', '10',
         '-c:v', 'libvpx-vp9',
         '-pix_fmt', 'yuva420p'
       )
