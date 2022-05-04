@@ -16,10 +16,16 @@ setInterval(() => {
 }, 1000 * 5)
 
 convertQueue.process(numOfCpus, async (job, done) => {
+  const output = temp.path({ suffix: '.webm' })
+
   const consoleName = `📹 job convert #${job.id}`
 
   console.time(consoleName)
-  const file = await convertToWebmSticker(job.data.fileUrl).catch(done)
+
+  const file = await convertToWebmSticker(job.data.fileUrl, output).catch((err) => {
+    err.message = `${os.hostname} ::: ${err.message}`
+    done(err)
+  })
 
   if (file) {
     const content = await fs.readFile(file.output, { encoding: 'base64' });
@@ -29,6 +35,8 @@ convertQueue.process(numOfCpus, async (job, done) => {
       content
     })
   }
+
+  await fs.unlink(output).catch(() => {})
 
   console.timeEnd(consoleName)
 })
@@ -45,9 +53,7 @@ const ffprobePromise = (file) => {
   })
 }
 
-async function convertToWebmSticker (input) {
-  const output = temp.path({ suffix: '.webm' })
-
+async function convertToWebmSticker (input, output) {
   const meta = await ffprobePromise(input)
 
   const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
