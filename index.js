@@ -18,7 +18,7 @@ setInterval(() => {
 convertQueue.process(numOfCpus, async (job, done) => {
   // if timestamp > 10 minutes ago, skip
   if (job.timestamp < Date.now() - 1000 * 60 * 10) {
-    return done()
+    return done(new Error('job is too old'))
   }
 
   const output = temp.path({ suffix: '.webm' })
