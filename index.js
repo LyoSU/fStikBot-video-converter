@@ -7,6 +7,8 @@ const Queue = require('bull')
 
 const numOfCpus = parseInt(process.env.MAX_PROCESS) || os.cpus().length
 
+console.log('start with', numOfCpus, 'workers')
+
 const convertQueue = new Queue('convert', {
   redis: { port: process.env.REDIS_PORT, host: process.env.REDIS_HOST, password: process.env.REDIS_PASSWORD }
 })
@@ -27,7 +29,7 @@ convertQueue.process(numOfCpus, async (job, done) => {
 
   console.time(consoleName)
 
-  const file = await convertToWebmSticker(job.data.fileUrl, output).catch((err) => {
+  const file = await convertToWebmSticker(job.data.fileUrl, output, consoleName).catch((err) => {
     err.message = `${os.hostname} ::: ${err.message}`
     done(err)
   })
@@ -58,7 +60,7 @@ const ffprobePromise = (file) => {
   })
 }
 
-async function convertToWebmSticker (input, output) {
+async function convertToWebmSticker (input, output, consoleName = '') {
   const meta = await ffprobePromise(input)
 
   const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
@@ -74,6 +76,8 @@ async function convertToWebmSticker (input, output) {
     }
     fileter = scale + `pad=512:${height}:-1:-1:color=black@0`
   }
+
+  console.log(consoleName, fileter, videoMeta.codec_name, videoMeta.duration)
 
   return new Promise((resolve, reject) => {
     const process = ffmpeg()
