@@ -77,8 +77,6 @@ async function convertToWebmSticker (input, output, consoleName = '') {
     fileter = scale + `pad=512:${height}:-1:-1:color=black@0`
   }
 
-  console.log(consoleName, fileter, videoMeta.codec_name, videoMeta.duration)
-
   return new Promise((resolve, reject) => {
     const process = ffmpeg()
       .input(input)
