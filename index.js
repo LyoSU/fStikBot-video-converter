@@ -116,7 +116,6 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
     inputOptions.push('-c:v libvpx-vp9')
   }
   if (type && !(isAlpha)) {
-    console.log(1)
     switch (type) {
       case 'circle':
         input_mask = 'circle.png'
