@@ -115,7 +115,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
   if (videoMeta.tags && videoMeta.tags.alpha_mode === '1') {
     inputOptions.push('-c:v libvpx-vp9')
   }
-  if (type && !(isAlpha)) {
+  if (type && type !== 'square' && !(isAlpha)) {
     switch (type) {
       case 'circle':
         input_mask = 'circle.png'
