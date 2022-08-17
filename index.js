@@ -111,6 +111,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
       options: { w: 512, h: height, x: -1, y: -1, color: "black@0" },
       inputs: "[sticker]",
     })
+    var padded = true
   }
   if (videoMeta.tags && videoMeta.tags.alpha_mode === '1') {
     inputOptions.push('-c:v libvpx-vp9')
@@ -207,7 +208,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
       }])
 
 
-  } else if (videoMeta.codec_name != 'gif') {
+  } else if (!padded) {
     finalScaleFilter = scaleFilter
     delete finalScaleFilter.outputs
     complexFilters.push(finalScaleFilter)
@@ -241,7 +242,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
       .outputOptions(
         '-c:v', 'libvpx-vp9',
         '-pix_fmt', 'yuva420p',
-        '-metadata', 'title="https://t.me/fstikbot',
+        '-metadata', 'title=https://t.me/fstikbot',
       )
       .output(output)
       .videoBitrate(`${bitrate}k`, true)
