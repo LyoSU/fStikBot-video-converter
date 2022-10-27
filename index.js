@@ -1,4 +1,5 @@
 require('dotenv').config({ path: './.env' })
+const { exec } = require('node:child_process')
 const os = require('os')
 const fs = require('fs').promises
 const ffmpeg = require('fluent-ffmpeg')
@@ -9,8 +10,61 @@ const numOfCpus = parseInt(process.env.MAX_PROCESS) || os.cpus().length
 
 console.log('start with', numOfCpus, 'workers')
 
+async function asyncExecFile (app, args) {
+  return new Promise((resolve, reject) => {
+    exec(`${app} ${args.join(' ')}`, (err, stdout, stderr) => {
+      if (err) {
+        reject(err)
+      } else {
+        resolve({ stdout, stderr })
+      }
+    })
+  })
+}
+
+const redisConfig =  {
+  port: process.env.REDIS_PORT,
+  host: process.env.REDIS_HOST,
+  password: process.env.REDIS_PASSWORD
+}
+
+const removebgQueue = new Queue('removebg', {
+  redis: redisConfig
+})
+
+if (os.platform() === 'darwin') {
+  removebgQueue.process(numOfCpus, async (job, done) => {
+    const { fileUrl } = job.data
+
+    const tempInput = temp.path({ suffix: '.jpg' })
+    const tempOutput = temp.path({ suffix: '.png' })
+
+    // download file to temp
+    await asyncExecFile('curl', ['-s', fileUrl, '-o', tempInput])
+
+    console.time('🖼️  removebg')
+    await asyncExecFile('shortcuts',
+      [
+        'run removebg',
+        '-i', tempInput,
+        '-o', tempOutput,
+      ]
+    ).catch((err) => {
+      console.log(err)
+    })
+    console.timeEnd('🖼️  removebg')
+
+    const content = await fs.readFile(tempOutput, { encoding: 'base64' });
+
+    done(null, {
+      content
+    })
+  })
+}
+
+
 const convertQueue = new Queue('convert', {
-  redis: { port: process.env.REDIS_PORT, host: process.env.REDIS_HOST, password: process.env.REDIS_PASSWORD }
+  redis: redisConfig
 })
 
 setInterval(() => {
@@ -30,7 +84,7 @@ convertQueue.process(numOfCpus, async (job, done) => {
   console.time(consoleName)
   bitrate = (job.data.bitrate) || process.env.DEFAULT_BITRATE || 400
   isEmoji = (job.data.isEmoji) || false
-  const file = await convertToWebmSticker(job.data.fileUrl, job.data.type, job.data.forceCrop, job.data.isEmoji, output, bitrate).catch((err) => {
+  const file = await convertToWebmSticker(`data:video/mp4;base64,${job.data.fileData}`, job.data.type, job.data.forceCrop, job.data.isEmoji, output, bitrate).catch((err) => {
     err.message = `${os.hostname} ::: ${err.message}`
     done(err)
   })
@@ -116,6 +170,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
   if (videoMeta.tags && videoMeta.tags.alpha_mode === '1') {
     inputOptions.push('-c:v libvpx-vp9')
   }
+
   if (type && type !== 'square' && !(isAlpha)) {
     switch (type) {
       case 'circle':
@@ -215,15 +270,12 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
   }
 
   return new Promise((resolve, reject) => {
-
     const process = ffmpeg()
       .input(input)
       .addInputOptions(inputOptions)
-    if (type && !(isAlpha)) {
+    if (type && !(isAlpha) && input_mask) {
       process.input(input_mask);
     }
-
-
 
     process.on('error', (error) => {
       console.error(error.message, input, videoMeta)
