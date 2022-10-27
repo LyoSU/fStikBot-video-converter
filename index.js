@@ -37,28 +37,39 @@ if (os.platform() === 'darwin') {
     const { fileUrl } = job.data
 
     const tempInput = temp.path({ suffix: '.jpg' })
-    const tempOutput = temp.path({ suffix: '.png' })
 
     // download file to temp
-    await asyncExecFile('curl', ['-s', fileUrl, '-o', tempInput])
+    await asyncExecFile('curl', ['-s', fileUrl, '-o', tempInput]).catch((err) => {
+      console.error(err)
+      done(err)
+    })
 
     console.time('🖼️  removebg')
-    await asyncExecFile('shortcuts',
+    const output = await asyncExecFile('shortcuts',
       [
-        'run removebg',
+        'run removebg ',
         '-i', tempInput,
-        '-o', tempOutput,
+        ' | cat'
       ]
     ).catch((err) => {
       console.log(err)
     })
     console.timeEnd('🖼️  removebg')
 
-    const content = await fs.readFile(tempOutput, { encoding: 'base64' });
+    const file = output.stdout
 
-    done(null, {
-      content
-    })
+    const content = await fs.readFile(file, { encoding: 'base64' });
+
+    await fs.unlink(tempInput).catch((() => {}))
+    await fs.unlink(file).catch((() => {}))
+
+    if (content) {
+      done(null, {
+        content
+      })
+    } else {
+      done(new Error('removebg failed'))
+    }
   })
 }
 
@@ -106,7 +117,7 @@ convertQueue.process(numOfCpus, async (job, done) => {
     })
   }
 
-  await fs.unlink(output).catch(() => { })
+  await fs.unlink(output).catch(() => {})
 
   console.timeEnd(consoleName)
 })
