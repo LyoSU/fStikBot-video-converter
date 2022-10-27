@@ -84,7 +84,15 @@ convertQueue.process(numOfCpus, async (job, done) => {
   console.time(consoleName)
   bitrate = (job.data.bitrate) || process.env.DEFAULT_BITRATE || 400
   isEmoji = (job.data.isEmoji) || false
-  const file = await convertToWebmSticker(`data:video/mp4;base64,${job.data.fileData}`, job.data.type, job.data.forceCrop, job.data.isEmoji, output, bitrate).catch((err) => {
+
+  let input
+  if (job.data.fileData) {
+    input = `data:video/mp4;base64,${job.data.fileData}`
+  } else {
+    input = job.data.fileUrl
+  }
+
+  const file = await convertToWebmSticker(input, job.data.type, job.data.forceCrop, job.data.isEmoji, output, bitrate).catch((err) => {
     err.message = `${os.hostname} ::: ${err.message}`
     done(err)
   })
