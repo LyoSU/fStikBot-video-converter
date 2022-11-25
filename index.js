@@ -33,17 +33,7 @@ const removebgQueue = new Queue('removebg', {
 })
 
 if (os.platform() === 'darwin') {
-  removebgQueue.process(numOfCpus, async (job, done) => {
-    const { fileUrl } = job.data
-
-    const tempInput = temp.path({ suffix: '.jpg' })
-
-    // download file to temp
-    await asyncExecFile('curl', ['-s', fileUrl, '-o', tempInput]).catch((err) => {
-      console.error(err)
-      done(err)
-    })
-
+  async function removebg (tempInput) {
     console.time('🖼️  removebg')
     const output = await asyncExecFile('shortcuts',
       [
@@ -56,11 +46,34 @@ if (os.platform() === 'darwin') {
     })
     console.timeEnd('🖼️  removebg')
 
-    const file = output.stdout
+    return output
+  }
 
-    const content = await fs.readFile(file, { encoding: 'base64' });
+  removebgQueue.process(numOfCpus, async (job, done) => {
+    const { fileUrl } = job.data
+
+    const tempInput = temp.path({ suffix: '.jpg' })
+
+    // download file to temp
+    await asyncExecFile('curl', ['-s', fileUrl, '-o', tempInput]).catch((err) => {
+      console.error(err)
+      done(err)
+    })
+
+    const output = await removebg(tempInput).catch((err) => {
+      console.error(err)
+      done(err)
+    })
 
     await fs.unlink(tempInput).catch((() => {}))
+
+    const file = output.stdout
+
+    const content = await fs.readFile(file, { encoding: 'base64' }).catch((err) => {
+      console.error(err)
+      done(err)
+    });
+
     await fs.unlink(file).catch((() => {}))
 
     if (content) {
@@ -109,7 +122,10 @@ convertQueue.process(numOfCpus, async (job, done) => {
   })
 
   if (file) {
-    const content = await fs.readFile(file.output, { encoding: 'base64' });
+    const content = await fs.readFile(file.output, { encoding: 'base64' }).catch((err) => {
+      console.error(err)
+      done(err)
+    });
 
     done(null, {
       metadata: file.metadata,
@@ -204,7 +220,12 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
           ])
         break;
       case 'rounded':
-        input_mask = 'corner.png'
+      case 'lite':
+        if (type === 'lite')
+          input_mask = 'lite.png'
+        else
+          input_mask = 'corner.png'
+
         firstfilter = (forceCrop) ? cropFilter : scaleFilter;
         complexFilters = complexFilters.concat(firstfilter)
           .concat([
