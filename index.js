@@ -309,6 +309,8 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
     complexFilters.push(finalScaleFilter)
   }
 
+  const fps = videoMeta.r_frame_rate.split('/')[0]
+
   return new Promise((resolve, reject) => {
     const process = ffmpeg()
       .input(input)
@@ -338,7 +340,8 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
       )
       .output(output)
       .videoBitrate(`${bitrate}k`, true)
-      .duration(2.9)
+      .duration(3)
+      .fps(fps >= 30 ? 60 : 30)
 
     process.run()
   })
