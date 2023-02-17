@@ -339,7 +339,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
         '-metadata', 'title=https://t.me/fstikbot',
       )
       .videoBitrate(`${bitrate}k`, true)
-      .duration(3)
+      .duration(2.999)
       .output(output)
 
     if (fps > 60) {
