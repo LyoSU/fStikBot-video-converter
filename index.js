@@ -214,7 +214,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
 
   const meta = await ffprobePromise(input)
 
-  let duration = meta.format.duration
+  let duration = meta.format.duration || maxDuration
   if (duration > maxDuration) duration = maxDuration
 
   if (duration > 3) {
