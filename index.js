@@ -395,7 +395,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
       process.fps(60)
     }
 
-    if (duration > 4) {
+    if (duration > 4 && fps > 30) {
       process.fps(30)
     }
 
