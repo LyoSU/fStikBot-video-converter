@@ -1,7 +1,9 @@
 require('dotenv').config({ path: './.env' })
 const { exec } = require('node:child_process')
 const os = require('os')
-const fs = require('fs').promises
+const util = require('util'),
+    fs = require('fs'),
+    fsp = fs.promises;
 const ffmpeg = require('fluent-ffmpeg')
 const temp = require('temp').track()
 const Queue = require('bull')
@@ -20,6 +22,22 @@ async function asyncExecFile (app, args) {
       }
     })
   })
+}
+
+async function modifyWebmFileDuration(filePath) {
+  // Read in the file as a buffer
+  const fileBuffer = await fs.promises.readFile(filePath);
+
+  const durationPosition = fileBuffer.indexOf(Buffer.from('4489', 'hex'));
+
+  const newDuration = 3.0;
+  const newDurationBuffer = Buffer.alloc(8);
+  newDurationBuffer.writeDoubleLE(newDuration);
+
+  fileBuffer.write(newDurationBuffer.toString('hex'), durationPosition, 8, 'hex');
+
+  // Write the updated buffer to disk
+  await fs.promises.writeFile(filePath, fileBuffer);
 }
 
 const redisConfig =  {
@@ -65,16 +83,16 @@ if (os.platform() === 'darwin') {
       done(err)
     })
 
-    await fs.unlink(tempInput).catch((() => {}))
+    await fsp.unlink(tempInput).catch((() => {}))
 
     const file = output.stdout
 
-    const content = await fs.readFile(file, { encoding: 'base64' }).catch((err) => {
+    const content = await fsp.readFile(file, { encoding: 'base64' }).catch((err) => {
       console.error(err)
       done(err)
     });
 
-    await fs.unlink(file).catch((() => {}))
+    await fsp.unlink(file).catch((() => {}))
 
     if (content) {
       done(null, {
@@ -122,7 +140,19 @@ convertQueue.process(numOfCpus, async (job, done) => {
   })
 
   if (file) {
-    const content = await fs.readFile(file.output, { encoding: 'base64' }).catch((err) => {
+    const tempModified = temp.path({ suffix: '.webm' })
+
+    await fsp.copyFile(output, tempModified).catch((err) => {
+      console.error(err)
+      done(err)
+    })
+
+    await modifyWebmFileDuration(tempModified).catch((err) => {
+      console.error(err)
+      done(err)
+    })
+
+    const content = await fsp.readFile(tempModified, { encoding: 'base64' }).catch((err) => {
       console.error(err)
       done(err)
     });
@@ -131,9 +161,11 @@ convertQueue.process(numOfCpus, async (job, done) => {
       metadata: file.metadata,
       content
     })
+
+    await fsp.unlink(tempModified).catch(() => {})
   }
 
-  await fs.unlink(output).catch(() => {})
+  await fsp.unlink(output).catch(() => {})
 
   console.timeEnd(consoleName)
 })
@@ -151,7 +183,7 @@ const ffprobePromise = (file) => {
 }
 
 async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bitrate) {
-  let inputOptions = ['-t 3']
+  let inputOptions = ['-t 30']
   outputDimensions = { w: 512, h: 512 }
   if (isEmoji) outputDimensions = { w: 100, h: 100 }
   const scaleFilter = {
@@ -180,6 +212,13 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
   },]
 
   const meta = await ffprobePromise(input)
+
+  let duration = meta.format.duration
+  if (duration > 30)  duration = 30
+
+  if (duration > 3) {
+    bitrate = ((10 * 8192) / duration) / 100
+  }
 
   const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
   isAlpha = (videoMeta.codec_name == 'gif' || videoMeta.codec_name == 'webp' || videoMeta.codec_name == 'png' || videoMeta.tags?.alpha_mode == '1')
@@ -325,6 +364,8 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
     })
       .on('end', () => {
         ffmpeg.ffprobe(output, (_err, metadata) => {
+          console.log('file size', (metadata.format.size / 1024).toFixed(2), 'kb')
+
           resolve({
             output,
             metadata
@@ -336,14 +377,26 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
       .outputOptions(
         '-c:v', 'libvpx-vp9',
         '-pix_fmt', 'yuva420p',
+        '-map', '0:v',
+        '-map_metadata', '-1',
+        '-fflags', '+bitexact',
+        '-flags:v', '+bitexact',
+        '-flags:a', '+bitexact',
+        '-b:v', `${bitrate}k`,
+        '-maxrate', `${bitrate}k`,
+        '-bufsize', '300k',
+        '-fs', '255000',
         '-metadata', 'title=https://t.me/fstikbot',
       )
-      .videoBitrate(`${bitrate}k`, true)
-      .duration(2.999)
+      // .duration(2.999)
       .output(output)
 
     if (fps > 60) {
       process.fps(60)
+    }
+
+    if (duration > 4) {
+      process.fps(30)
     }
 
     process.run()
