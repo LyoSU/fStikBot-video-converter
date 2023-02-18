@@ -124,8 +124,9 @@ convertQueue.process(numOfCpus, async (job, done) => {
   const consoleName = `📹 job convert #${job.id}`
 
   console.time(consoleName)
-  bitrate = (job.data.bitrate) || process.env.DEFAULT_BITRATE || 400
-  isEmoji = (job.data.isEmoji) || false
+  let bitrate = (job.data.bitrate) || process.env.DEFAULT_BITRATE || 400
+  let maxDuration = (job.data.maxDuration) || process.env.DEFAULT_MAX_DURATION || 10
+  let isEmoji = (job.data.isEmoji) || false
 
   let input
   if (job.data.fileData) {
@@ -134,7 +135,7 @@ convertQueue.process(numOfCpus, async (job, done) => {
     input = job.data.fileUrl
   }
 
-  const file = await convertToWebmSticker(input, job.data.type, job.data.forceCrop, job.data.isEmoji, output, bitrate).catch((err) => {
+  const file = await convertToWebmSticker(input, job.data.type, job.data.forceCrop, isEmoji, output, bitrate, maxDuration).catch((err) => {
     err.message = `${os.hostname} ::: ${err.message}`
     done(err)
   })
@@ -182,8 +183,8 @@ const ffprobePromise = (file) => {
   })
 }
 
-async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bitrate) {
-  let inputOptions = ['-t 30']
+async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bitrate, maxDuration) {
+  let inputOptions = [`-t ${maxDuration}`]
   outputDimensions = { w: 512, h: 512 }
   if (isEmoji) outputDimensions = { w: 100, h: 100 }
   const scaleFilter = {
