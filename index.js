@@ -221,7 +221,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
   if (duration > maxDuration) duration = maxDuration
 
   if (duration > 3) {
-    bitrate = ((10 * 8192) / duration) / 100
+    bitrate = ((17 * 8192) / duration) / 100
   }
 
   const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
