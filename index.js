@@ -124,7 +124,7 @@ convertQueue.process(numOfCpus, async (job, done) => {
   const consoleName = `📹 job convert #${job.id}`
 
   console.time(consoleName)
-  let bitrate = (job.data.bitrate) || process.env.DEFAULT_BITRATE || 400
+  let bitrate = (job.data.bitrate) || process.env.DEFAULT_BITRATE || 500
   let maxDuration = (job.data.maxDuration) || process.env.DEFAULT_MAX_DURATION || 10
   let isEmoji = (job.data.isEmoji) || false
 
@@ -206,15 +206,18 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
     outputs: "[sticker]",
   },
   ]
-  let complexFilters = [{
-    filter: "null",
-    inputs: "[0:v]",
-    outputs: "[sticker]"
-  },]
+
+  let complexFilters = [
+    {
+      filter: "null",
+      inputs: "[0:v]",
+      outputs: "[sticker]"
+    },
+  ]
 
   const meta = await ffprobePromise(input)
 
-  let duration = meta.format.duration || maxDuration
+  let duration = (meta.format.duration === 'N/A' ? 0 : parseFloat(meta.format.duration)) || maxDuration
   if (duration > maxDuration) duration = maxDuration
 
   if (duration > 3) {
@@ -341,28 +344,48 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
         filter: "alphamerge",
         inputs: "[sticker][mask]",
       }])
-
-
   } else if (!padded) {
     finalScaleFilter = scaleFilter
     delete finalScaleFilter.outputs
     complexFilters.push(finalScaleFilter)
   }
 
-  const fps = videoMeta.r_frame_rate.split('/')[0]
+  const fps = parseInt(videoMeta.r_frame_rate.split('/')[0])
 
   return new Promise((resolve, reject) => {
     const process = ffmpeg()
       .input(input)
       .addInputOptions(inputOptions)
+
     if (type && !(isAlpha) && input_mask) {
       process.input(input_mask);
     }
 
-    process.on('error', (error) => {
-      console.error(error.message, input, videoMeta)
-      reject(error)
-    })
+    process
+      .noAudio()
+      .complexFilter(complexFilters)
+      .fps(fps > 30 ? 30 : fps)
+      .outputOptions(
+        '-c:v', 'libvpx-vp9',
+        // '-pix_fmt', 'yuva420p',
+        '-map', '0:v',
+        '-map_metadata', '-1',
+        '-fflags', '+bitexact',
+        '-flags:v', '+bitexact',
+        '-flags:a', '+bitexact',
+        '-b:v', `${bitrate}k`,
+        '-maxrate', `${bitrate * 1.5}k`,
+        '-bufsize', '300k',
+        '-fs', '255000',
+        '-crf', '40',
+        '-metadata', 'title=https://t.me/fstikbot',
+      )
+      .duration(duration)
+      .output(output)
+      .on('error', (error) => {
+        console.error(error.message, input, videoMeta)
+        reject(error)
+      })
       .on('end', () => {
         ffmpeg.ffprobe(output, (_err, metadata) => {
           console.log('file size', (metadata.format.size / 1024).toFixed(2), 'kb')
@@ -373,33 +396,6 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
           })
         })
       })
-      .noAudio()
-      .complexFilter(complexFilters)
-      .outputOptions(
-        '-c:v', 'libvpx-vp9',
-        '-pix_fmt', 'yuva420p',
-        '-map', '0:v',
-        '-map_metadata', '-1',
-        '-fflags', '+bitexact',
-        '-flags:v', '+bitexact',
-        '-flags:a', '+bitexact',
-        '-b:v', `${bitrate}k`,
-        '-maxrate', `${bitrate}k`,
-        '-bufsize', '300k',
-        '-fs', '255000',
-        '-metadata', 'title=https://t.me/fstikbot',
-      )
-      .duration(duration)
-      .output(output)
-
-    if (fps > 60) {
-      process.fps(60)
-    }
-
-    if (duration > 4 && fps > 30) {
-      process.fps(30)
-    }
-
-    process.run()
+      .run()
   })
 }
