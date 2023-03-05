@@ -135,7 +135,7 @@ convertQueue.process(numOfCpus, async (job, done) => {
     input = job.data.fileUrl
   }
 
-  const file = await convertToWebmSticker(input, job.data.type, job.data.forceCrop, isEmoji, output, bitrate, maxDuration).catch((err) => {
+  const file = await convertToWebmSticker(input, job.data.frameType, job.data.forceCrop, isEmoji, output, bitrate, maxDuration).catch((err) => {
     err.message = `${os.hostname} ::: ${err.message}`
     done(err)
   })
@@ -160,7 +160,8 @@ convertQueue.process(numOfCpus, async (job, done) => {
 
     done(null, {
       metadata: file.metadata,
-      content
+      content,
+      input: job.data.input
     })
 
     await fsp.unlink(tempModified).catch(() => {})
@@ -183,10 +184,11 @@ const ffprobePromise = (file) => {
   })
 }
 
-async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bitrate, maxDuration) {
-  let inputOptions = [`-t ${maxDuration}`]
-  outputDimensions = { w: 512, h: 512 }
+async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output, bitrate, maxDuration) {
+  const inputOptions = [`-t ${maxDuration}`]
+  let outputDimensions = { w: 512, h: 512 }
   if (isEmoji) outputDimensions = { w: 100, h: 100 }
+
   const scaleFilter = {
     filter: "scale",
     options: { w: outputDimensions.w, h: outputDimensions.h, force_original_aspect_ratio: "decrease" },
@@ -221,7 +223,11 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
   if (duration > maxDuration) duration = maxDuration
 
   if (duration > 3) {
-    bitrate = ((17 * 8192) / duration) / 100
+    if (isEmoji) {
+      bitrate = ((5 * 8192) / duration) / 100
+    } else {
+      bitrate = ((17 * 8192) / duration) / 100
+    }
   }
 
   const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
@@ -249,8 +255,10 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
     inputOptions.push('-c:v libvpx-vp9')
   }
 
-  if (type && type !== 'square' && !(isAlpha)) {
-    switch (type) {
+  let input_mask
+
+  if (frameType && frameType !== 'square' && !(isAlpha)) {
+    switch (frameType) {
       case 'circle':
         input_mask = 'circle.png'
         complexFilters = complexFilters.concat(cropFilter)
@@ -264,7 +272,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
         break;
       case 'rounded':
       case 'lite':
-        if (type === 'lite')
+        if (frameType === 'lite')
           input_mask = 'lite.png'
         else
           input_mask = 'corner.png'
@@ -345,19 +353,23 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
         inputs: "[sticker][mask]",
       }])
   } else if (!padded) {
-    finalScaleFilter = scaleFilter
+    let finalScaleFilter = scaleFilter
     delete finalScaleFilter.outputs
+    if (forceCrop) {
+      finalScaleFilter.inputs = "[sticker]"
+      complexFilters = complexFilters.concat(cropFilter)
+    }
     complexFilters.push(finalScaleFilter)
   }
 
-  const fps = parseInt(videoMeta.r_frame_rate.split('/')[0])
+  const fps = parseInt(videoMeta.r_frame_rate.split('/')[0]) / parseInt(videoMeta.r_frame_rate.split('/')[1])
 
   return new Promise((resolve, reject) => {
     const process = ffmpeg()
       .input(input)
       .addInputOptions(inputOptions)
 
-    if (type && !(isAlpha) && input_mask) {
+    if (frameType && !(isAlpha) && input_mask) {
       process.input(input_mask);
     }
 
@@ -388,7 +400,7 @@ async function convertToWebmSticker(input, type, forceCrop, isEmoji, output, bit
       })
       .on('end', () => {
         ffmpeg.ffprobe(output, (_err, metadata) => {
-          console.log('file size', (metadata.format.size / 1024).toFixed(2), 'kb')
+          console.log('file size', (metadata?.format?.size / 1024).toFixed(2), 'kb')
 
           resolve({
             output,
