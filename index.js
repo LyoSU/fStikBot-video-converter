@@ -233,7 +233,7 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
   const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
   isAlpha = (videoMeta.codec_name == 'gif' || videoMeta.codec_name == 'webp' || videoMeta.codec_name == 'png' || videoMeta.tags?.alpha_mode == '1')
 
-  if (videoMeta.codec_name === 'gif' && videoMeta.width < 512 && videoMeta.height < 512 && !(isEmoji)) {
+  if ((videoMeta.codec_name === 'gif' || isAlpha) && videoMeta.width < 512 && videoMeta.height < 512 && !(isEmoji)) {
     let height = videoMeta.height
     if (videoMeta.width < 150 && videoMeta.height < 150) {
       height = 150
@@ -246,7 +246,7 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
     }
     complexFilters.push({
       filter: "pad",
-      options: { w: 512, h: height, x: -1, y: -1, color: "black@0" },
+      options: { w: 512, h: height, x: -1, y: -1, color: "white@0" },
       inputs: "[sticker]",
     })
     var padded = true
@@ -271,9 +271,12 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
           ])
         break;
       case 'rounded':
+      case 'medium':
       case 'lite':
         if (frameType === 'lite')
           input_mask = 'lite.png'
+        else if (frameType === 'medium')
+          input_mask = 'medium.png'
         else
           input_mask = 'corner.png'
 
