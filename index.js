@@ -195,6 +195,10 @@ const ffprobePromise = (file) => {
 }
 
 async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output, bitrate, maxDuration) {
+  if (isEmoji) {
+    maxDuration = 3
+  }
+
   const inputOptions = [`-t ${maxDuration}`]
   let outputDimensions = { w: 512, h: 512 }
   if (isEmoji) outputDimensions = { w: 100, h: 100 }
