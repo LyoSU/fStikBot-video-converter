@@ -141,19 +141,27 @@ convertQueue.process(numOfCpus, async (job, done) => {
   })
 
   if (file) {
-    const tempModified = temp.path({ suffix: '.webm' })
+    let fileConent, tempModified
 
-    await fsp.copyFile(output, tempModified).catch((err) => {
-      console.error(err)
-      done(err)
-    })
+    if (!job.data.isEmoji && file?.metadata?.format?.duration > 3) {
+      tempModified = temp.path({ suffix: '.webm' })
 
-    await modifyWebmFileDuration(tempModified).catch((err) => {
-      console.error(err)
-      done(err)
-    })
+      await fsp.copyFile(output, tempModified).catch((err) => {
+        console.error(err)
+        done(err)
+      })
 
-    const content = await fsp.readFile(tempModified, { encoding: 'base64' }).catch((err) => {
+      await modifyWebmFileDuration(tempModified).catch((err) => {
+        console.error(err)
+        done(err)
+      })
+
+      fileConent = tempModified
+    } else {
+      fileConent = output
+    }
+
+    const content = await fsp.readFile(fileConent, { encoding: 'base64' }).catch((err) => {
       console.error(err)
       done(err)
     });
@@ -164,7 +172,9 @@ convertQueue.process(numOfCpus, async (job, done) => {
       input: job.data.input
     })
 
-    await fsp.unlink(tempModified).catch(() => {})
+    if (tempModified) {
+      await fsp.unlink(tempModified).catch(() => {})
+    }
   }
 
   await fsp.unlink(output).catch(() => {})
