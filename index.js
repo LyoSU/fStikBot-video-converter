@@ -158,7 +158,28 @@ convertQueue.process(numOfCpus, async (job, done) => {
 
       fileConent = tempModified
     } else {
-      fileConent = output
+      if (job.data.isEmoji && file?.metadata?.format?.duration > 3) {
+        // trim video
+        const tempTrimmed = temp.path({ suffix: '.webm' })
+
+        // trim to 2.9 seconds
+        await asyncExecFile('ffmpeg', [
+          '-i', output,
+          '-ss', '0',
+          '-t', '2.9',
+          '-c', 'copy',
+          tempTrimmed
+        ]).catch((err) => {
+          console.error(err)
+          done(err)
+        })
+
+        await fsp.unlink(output).catch(() => {})
+
+        fileConent = tempTrimmed
+      } else {
+        fileConent = output
+      }
     }
 
     const content = await fsp.readFile(fileConent, { encoding: 'base64' }).catch((err) => {
@@ -200,6 +221,8 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
   }
 
   const inputOptions = [`-t ${maxDuration}`]
+
+
   let outputDimensions = { w: 512, h: 512 }
   if (isEmoji) outputDimensions = { w: 100, h: 100 }
 
