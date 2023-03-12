@@ -28,17 +28,16 @@ async function modifyWebmFileDuration(filePath) {
   // Read in the file as a buffer
   const fileBuffer = await fs.promises.readFile(filePath);
 
-  const durationPosition = fileBuffer.indexOf(Buffer.from('4489', 'hex'));
+  // Find the position of the duration in the buffer
+  const durationPosition = fileBuffer.indexOf(Buffer.from('4489', 'hex')); // 44 89 is the hex code for the duration in the WebM file
 
-  const newDuration = 3.0;
-  const newDurationBuffer = Buffer.alloc(8);
-  newDurationBuffer.writeDoubleLE(newDuration);
-
-  fileBuffer.write(newDurationBuffer.toString('hex'), durationPosition, 8, 'hex');
+  // Write the new duration to the buffer
+  fileBuffer.writeUInt32LE(1000000, durationPosition + 4);
 
   // Write the updated buffer to disk
   await fs.promises.writeFile(filePath, fileBuffer);
 }
+
 
 const redisConfig =  {
   port: process.env.REDIS_PORT,
@@ -159,7 +158,6 @@ convertQueue.process(numOfCpus, async (job, done) => {
       fileConent = tempModified
     } else {
       if (job.data.isEmoji && file?.metadata?.format?.duration > 3) {
-        // trim video
         const tempTrimmed = temp.path({ suffix: '.webm' })
 
         // trim to 2.9 seconds
@@ -416,7 +414,7 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
     process
       .noAudio()
       .complexFilter(complexFilters)
-      .fps(fps > 30 ? 30 : fps)
+      .fps(Math.min(30, fps))
       .outputOptions(
         '-c:v', 'libvpx-vp9',
         // '-pix_fmt', 'yuva420p',
