@@ -1,12 +1,13 @@
 require('dotenv').config({ path: './.env' })
 const { exec } = require('node:child_process')
 const os = require('os')
-const util = require('util'),
-    fs = require('fs'),
+const fs = require('fs'),
     fsp = fs.promises;
 const ffmpeg = require('fluent-ffmpeg')
 const temp = require('temp').track()
+const got = require('got')
 const Queue = require('bull')
+
 
 const numOfCpus = parseInt(process.env.MAX_PROCESS) || os.cpus().length
 
@@ -49,7 +50,7 @@ const removebgQueue = new Queue('removebg', {
   redis: redisConfig
 })
 
-if (os.platform() === 'darwin') {
+if (os.platform() === '1darwin') {
   async function removebg (tempInput) {
     console.time('🖼️  removebg')
     const output = await asyncExecFile('shortcuts',
@@ -100,6 +101,44 @@ if (os.platform() === 'darwin') {
     } else {
       done(new Error('removebg failed'))
     }
+  })
+} else {
+  got.get(`${process.env.REMBG_URL}/docs`).then((res) => {
+    if (res.statusCode !== 200) {
+      console.error('rembg server is down')
+      return
+    }
+
+    removebgQueue.process(numOfCpus, async (job, done) => {
+      const consoleName = `🖼️  job removebg #${job.id}`
+
+      console.time(consoleName)
+      const { fileUrl, model } = job.data
+
+      const params = new URLSearchParams({
+        url: fileUrl,
+        model: model || 'silueta'
+      })
+
+      const result = await got(`${process.env.REMBG_URL}/?${params.toString()}`, {
+        responseType: 'buffer'
+      })
+
+      if (result.statusCode !== 200) {
+        done(new Error('removebg failed'))
+        return
+      }
+
+      const content = result.body.toString('base64')
+
+      console.timeEnd(consoleName)
+
+      done(null, {
+        content
+      })
+    })
+  }).catch((err) => {
+    console.error('rembg server is down')
   })
 }
 
