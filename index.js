@@ -68,6 +68,11 @@ if (os.platform() === '1darwin') {
   }
 
   removebgQueue.process(numOfCpus, async (job, done) => {
+    // if timestamp > 10 seconds ago, skip
+    if (job.timestamp < Date.now() - 1000 * 10) {
+      return done(new Error('job is too old'))
+    }
+
     const { fileUrl } = job.data
 
     const tempInput = temp.path({ suffix: '.jpg' })
