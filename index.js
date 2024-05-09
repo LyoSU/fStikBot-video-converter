@@ -126,12 +126,14 @@ if (os.platform() === '1darwin') {
       })
 
       const result = await got(`${process.env.REMBG_URL}/?${params.toString()}`, {
-        responseType: 'buffer'
+        responseType: 'buffer',
+        timeout: 1000 * 2
       }).catch((err) => {
         return err.response
       })
 
       if (result.statusCode !== 200) {
+        console.error('rembg failed', result.body.toString())
         done(new Error('removebg failed'))
         return
       }
