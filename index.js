@@ -129,11 +129,11 @@ if (os.platform() === '1darwin') {
         responseType: 'buffer',
         timeout: 1000 * 2
       }).catch((err) => {
+        console.error(err)
         return err.response
       })
 
-      if (result.statusCode !== 200) {
-        console.error('rembg failed', result.body.toString())
+      if (result?.statusCode !== 200) {
         done(new Error('removebg failed'))
         return
       }
