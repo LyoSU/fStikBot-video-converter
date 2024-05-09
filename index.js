@@ -127,7 +127,7 @@ if (os.platform() === '1darwin') {
 
       const result = await got(`${process.env.REMBG_URL}/?${params.toString()}`, {
         responseType: 'buffer',
-        timeout: 1000 * 2
+        timeout: 1000 * 5
       }).catch((err) => {
         console.error(err)
         return err.response
