@@ -25,18 +25,31 @@ async function asyncExecFile (app, args) {
   })
 }
 
+// Функція для модифікації тривалості WebM файлів
+// Модифікована для кращої підтримки в FFmpeg 7
 async function modifyWebmFileDuration(filePath) {
-  // Read in the file as a buffer
-  const fileBuffer = await fs.promises.readFile(filePath);
+  try {
+    // Читаємо файл як буфер
+    const fileBuffer = await fs.promises.readFile(filePath);
 
-  // Find the position of the duration in the buffer
-  const durationPosition = fileBuffer.indexOf(Buffer.from('4489', 'hex')); // 44 89 is the hex code for the duration in the WebM file
+    // Знаходимо позицію тривалості у буфері
+    const durationPosition = fileBuffer.indexOf(Buffer.from('4489', 'hex')); // 44 89 - це hex-код для тривалості у WebM файлі
 
-  // Write the new duration to the buffer
-  fileBuffer.writeUInt32LE(1000000, durationPosition + 4);
+    if (durationPosition === -1) {
+      console.warn('Не вдалося знайти дані тривалості у WebM файлі');
+      return;
+    }
 
-  // Write the updated buffer to disk
-  await fs.promises.writeFile(filePath, fileBuffer);
+    // Записуємо нову тривалість у буфер
+    fileBuffer.writeUInt32LE(1000000, durationPosition + 4);
+
+    // Записуємо оновлений буфер на диск
+    await fs.promises.writeFile(filePath, fileBuffer);
+    console.log('Тривалість WebM файлу була успішно модифікована');
+  } catch (err) {
+    console.error('Помилка при модифікації тривалості WebM файлу:', err);
+    throw err;
+  }
 }
 
 
@@ -198,6 +211,7 @@ convertQueue.process(numOfCpus, async (job, done) => {
         done(err)
       })
 
+      // Модифікуємо тривалість WebM файлу
       await modifyWebmFileDuration(tempModified).catch((err) => {
         console.error(err)
         done(err)
@@ -210,9 +224,17 @@ convertQueue.process(numOfCpus, async (job, done) => {
 
         // trim to 2.9 seconds
         await asyncExecFile('ffmpeg', [
+          // Додано явний декодер для вхідного WebM файлу
+          '-c:v', 'libvpx-vp9',
           '-i', output,
           '-ss', '0',
           '-t', '2.9',
+          // Явно зберігаємо формат з альфа-каналом
+          '-pix_fmt', 'yuva420p',
+          // Додано збереження метаданих альфа-каналу
+          '-metadata:s:v', 'alpha_mode=1',
+          // Вимкнено auto-alt-ref для кращої підтримки альфа-каналу
+          '-auto-alt-ref', '0',
           '-c', 'copy',
           tempTrimmed
         ]).catch((err) => {
@@ -266,8 +288,8 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
     maxDuration = 3
   }
 
-  const inputOptions = [`-t ${maxDuration}`]
-
+  // Додано явний декодер для вхідних файлів для кращої підтримки альфа-каналу
+  const inputOptions = [`-t ${maxDuration}`, '-c:v', 'libvpx-vp9']
 
   let outputDimensions = { w: 512, h: 512 }
   if (isEmoji) outputDimensions = { w: 100, h: 100 }
@@ -314,7 +336,15 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
   }
 
   const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
-  isAlpha = (videoMeta.codec_name == 'gif' || videoMeta.codec_name == 'webp' || videoMeta.codec_name == 'png' || videoMeta.tags?.alpha_mode == '1')
+
+  // Перевірка на наявність alpha_mode в метаданих
+  let isAlpha = (videoMeta.codec_name == 'gif' || videoMeta.codec_name == 'webp' || videoMeta.codec_name == 'png' ||
+                videoMeta.tags?.alpha_mode == '1')
+
+  // Додаткова перевірка на формат пікселів
+  if (videoMeta.pix_fmt && videoMeta.pix_fmt.includes('yuva')) {
+    isAlpha = true
+  }
 
   if ((videoMeta.codec_name === 'gif' || isAlpha) && videoMeta.width < 512 && videoMeta.height < 512 && !(isEmoji)) {
     let height = videoMeta.height
@@ -334,8 +364,14 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
     })
     var padded = true
   }
+
+  // Встановлюємо правильний декодер в залежності від типу відео
   if (videoMeta.tags && videoMeta.tags.alpha_mode === '1') {
-    inputOptions.push('-c:v libvpx-vp9')
+    if (videoMeta.codec_name === 'vp9') {
+      inputOptions.push('-c:v', 'libvpx-vp9')
+    } else {
+      inputOptions.push('-c:v', 'libvpx')
+    }
   }
 
   let input_mask
@@ -465,9 +501,12 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
       .fps(Math.min(30, fps))
       .outputOptions(
         '-c:v', 'libvpx-vp9',
+        // Явно вказуємо формат пікселів для збереження альфа-каналу
         '-pix_fmt', 'yuva420p',
         '-map', '0:v',
         '-map_metadata', '-1',
+        // Збережемо метадані альфа-каналу
+        '-metadata:s:v', 'alpha_mode=1',
         '-fflags', '+bitexact',
         '-flags:v', '+bitexact',
         '-flags:a', '+bitexact',
@@ -476,6 +515,8 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
         '-bufsize', '300k',
         '-fs', '255000',
         '-crf', '40',
+        // Вимкнемо auto-alt-ref для кращої підтримки альфа-каналу
+        '-auto-alt-ref', '0',
         '-metadata', 'title=https://t.me/fstikbot',
       )
       .duration(duration)
