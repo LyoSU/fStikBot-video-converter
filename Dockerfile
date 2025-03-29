@@ -15,12 +15,17 @@ RUN apt-get update && apt-get install -y \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install specific version of FFmpeg (4.4.4)
-RUN add-apt-repository ppa:savoury1/ffmpeg4 && \
-    apt-get update && \
-    apt-get install -y ffmpeg=4.4.4-0ubuntu1~18.04.sav1.1 && \
-    apt-mark hold ffmpeg && \
-    rm -rf /var/lib/apt/lists/*
+# Install specific version of FFmpeg 4.4.4
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    python3-software-properties \
+    software-properties-common \
+    && add-apt-repository -y ppa:jonathonf/ffmpeg-4 \
+    && apt-get update \
+    && apt-get install -y ffmpeg \
+    && apt-mark hold ffmpeg \
+    && ffmpeg -version | grep "ffmpeg version" \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
@@ -51,8 +56,4 @@ ENV REDIS_HOST=redis \
     DEFAULT_MAX_DURATION=10
 
 # Commands to run
-CMD echo "FFmpeg version:" && \
-    ffmpeg -version && \
-    echo "Starting application with environment from .env file..." && \
-    echo "Connecting to Redis at: ${REDIS_HOST}:${REDIS_PORT}" && \
-    node -r dotenv/config index.js
+CMD ["sh", "-c", "echo 'FFmpeg version:' && ffmpeg -version && echo 'Starting application with environment from .env file...' && echo 'Connecting to Redis at: ${REDIS_HOST}:${REDIS_PORT}' && node -r dotenv/config index.js"]
