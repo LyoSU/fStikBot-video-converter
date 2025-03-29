@@ -7,7 +7,6 @@ const ffmpeg = require('fluent-ffmpeg')
 const temp = require('temp').track()
 const got = require('got')
 const Queue = require('bull')
-const path = require('path')
 
 
 const numOfCpus = parseInt(process.env.MAX_PROCESS) || os.cpus().length
@@ -167,9 +166,7 @@ convertQueue.process(numOfCpus, async (job, done) => {
     return done(new Error('timeout'))
   }
 
-  // Гарантуємо, що шлях існує і є доступним
-  const tmpDir = os.tmpdir();
-  const outputFile = path.join(tmpDir, `sticker-${Date.now()}-${Math.round(Math.random() * 1000)}.webm`);
+  const output = temp.path({ suffix: '.webm' })
 
   const consoleName = `📹 job convert #${job.id}`
 
@@ -185,196 +182,318 @@ convertQueue.process(numOfCpus, async (job, done) => {
     input = job.data.fileUrl
   }
 
-  // Завантажимо файл локально перед обробкою
-  const localInput = path.join(tmpDir, `input-${Date.now()}-${Math.round(Math.random() * 1000)}.mp4`);
-
-  try {
-    await asyncExecFile('curl', ['-s', input, '-o', localInput]);
-    console.log("Файл завантажено:", localInput);
-  } catch (err) {
-    console.error("Помилка завантаження файлу:", err);
-    err.message = `${os.hostname} ::: ${err.message}`;
-    return done(err);
-  }
-
-  const file = await simpleConvertToWebm(
-    localInput,
-    outputFile,
-    isEmoji ? (isEmoji ? 100 : 512) : 512,
-    isEmoji ? 3 : maxDuration,
-    bitrate,
-    job.data.frameType
-  ).catch((err) => {
-    err.message = `${os.hostname} ::: ${err.message}`;
-    done(err);
-    return null;
-  });
-
-  // Видаляємо вхідний файл
-  await fsp.unlink(localInput).catch(() => {});
+  const file = await convertToWebmSticker(input, job.data.frameType, job.data.forceCrop, isEmoji, output, bitrate, maxDuration).catch((err) => {
+    err.message = `${os.hostname} ::: ${err.message}`
+    done(err)
+  })
 
   if (file) {
-    let fileConent, tempModified;
+    let fileConent, tempModified
 
-    if (!job.data.isEmoji && file.duration > 3) {
-      tempModified = path.join(tmpDir, `modified-${Date.now()}-${Math.round(Math.random() * 1000)}.webm`);
+    if (!job.data.isEmoji && file?.metadata?.format?.duration > 3) {
+      tempModified = temp.path({ suffix: '.webm' })
 
-      await fsp.copyFile(outputFile, tempModified).catch((err) => {
-        console.error(err);
-        done(err);
-        return;
-      });
+      await fsp.copyFile(output, tempModified).catch((err) => {
+        console.error(err)
+        done(err)
+      })
 
       await modifyWebmFileDuration(tempModified).catch((err) => {
-        console.error(err);
-        done(err);
-        return;
-      });
+        console.error(err)
+        done(err)
+      })
 
-      fileConent = tempModified;
+      fileConent = tempModified
     } else {
-      if (job.data.isEmoji && file.duration > 3) {
-        const tempTrimmed = path.join(tmpDir, `trimmed-${Date.now()}-${Math.round(Math.random() * 1000)}.webm`);
+      if (job.data.isEmoji && file?.metadata?.format?.duration > 3) {
+        const tempTrimmed = temp.path({ suffix: '.webm' })
 
         // trim to 2.9 seconds
         await asyncExecFile('ffmpeg', [
-          '-i', outputFile,
+          '-i', output,
           '-ss', '0',
           '-t', '2.9',
           '-c', 'copy',
           tempTrimmed
         ]).catch((err) => {
-          console.error(err);
-          done(err);
-          return;
-        });
+          console.error(err)
+          done(err)
+        })
 
-        await fsp.unlink(outputFile).catch(() => {});
-        fileConent = tempTrimmed;
+        await fsp.unlink(output).catch(() => {})
+
+        fileConent = tempTrimmed
       } else {
-        fileConent = outputFile;
+        fileConent = output
       }
     }
 
     const content = await fsp.readFile(fileConent, { encoding: 'base64' }).catch((err) => {
-      console.error(err);
-      done(err);
-      return;
+      console.error(err)
+      done(err)
     });
 
-    if (content) {
-      done(null, {
-        metadata: file.metadata,
-        content,
-        input: job.data.input
-      });
-    } else {
-      done(new Error('Failed to read content'));
-    }
+    done(null, {
+      metadata: file.metadata,
+      content,
+      input: job.data.input
+    })
 
     if (tempModified) {
-      await fsp.unlink(tempModified).catch(() => {});
+      await fsp.unlink(tempModified).catch(() => {})
     }
   }
 
-  await fsp.unlink(outputFile).catch(() => {});
-  console.timeEnd(consoleName);
-});
+  await fsp.unlink(output).catch(() => {})
 
-// Спрощена функція конвертації за допомогою CLI FFmpeg замість fluent-ffmpeg
-async function simpleConvertToWebm(inputFile, outputFile, size, maxDuration, bitrate, frameType) {
-  // Перевіряємо інформацію про відео
-  const metaResult = await asyncExecFile('ffprobe', [
-    '-v', 'quiet',
-    '-print_format', 'json',
-    '-show_format',
-    '-show_streams',
-    inputFile
-  ]);
+  console.timeEnd(consoleName)
+})
 
-  const metadata = JSON.parse(metaResult.stdout);
-  const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+const ffprobePromise = (file) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(file, (err, metadata) => {
+      if (err) {
+        reject(err)
+      } else {
+        resolve(metadata)
+      }
+    })
+  })
+}
 
-  if (!videoStream) {
-    throw new Error('No video stream found');
+async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output, bitrate, maxDuration) {
+  if (isEmoji) {
+    maxDuration = 3
   }
 
-  // Визначаємо тривалість
-  let duration = 0;
-  if (metadata.format && metadata.format.duration) {
-    duration = parseFloat(metadata.format.duration);
-    if (duration > maxDuration) duration = maxDuration;
-  }
+  const inputOptions = [`-t ${maxDuration}`]
 
-  // Коригуємо бітрейт залежно від тривалості
+
+  let outputDimensions = { w: 512, h: 512 }
+  if (isEmoji) outputDimensions = { w: 100, h: 100 }
+
+  const scaleFilter = {
+    filter: "scale",
+    options: { w: outputDimensions.w, h: outputDimensions.h, force_original_aspect_ratio: "decrease" },
+    inputs: "[sticker]",
+    outputs: "[sticker]"
+  }
+  const cropFilter = [{
+    filter: "scale",
+    options: { w: outputDimensions.w, h: outputDimensions.h, force_original_aspect_ratio: "increase" },
+    inputs: "[sticker]",
+    outputs: "[sticker]"
+  },
+  {
+    filter: "crop",
+    options: { w: outputDimensions.w, h: outputDimensions.h, },
+    inputs: "[sticker]",
+    outputs: "[sticker]",
+  },
+  ]
+
+  let complexFilters = [
+    {
+      filter: "null",
+      inputs: "[0:v]",
+      outputs: "[sticker]"
+    },
+  ]
+
+  const meta = await ffprobePromise(input)
+
+  let duration = (meta.format.duration === 'N/A' ? 0 : parseFloat(meta.format.duration)) || maxDuration
+  if (duration > maxDuration) duration = maxDuration
+
   if (duration > 3) {
-    if (size <= 100) { // isEmoji
-      bitrate = ((5 * 8192) / duration) / 100;
+    if (isEmoji) {
+      bitrate = ((5 * 8192) / duration) / 100
     } else {
-      bitrate = ((17 * 8192) / duration) / 100;
+      bitrate = ((17 * 8192) / duration) / 100
     }
   }
 
-  // Базові аргументи FFmpeg
-  let args = [
-    '-i', inputFile,
-    '-t', duration.toString(),
-    '-c:v', 'libvpx-vp9',
-    '-pix_fmt', 'yuva420p',
-    '-b:v', `${Math.round(bitrate)}k`,
-    '-maxrate', `${Math.round(bitrate * 1.5)}k`,
-    '-bufsize', '300k',
-    '-cpu-used', '2',
-    '-row-mt', '1',
-    '-deadline', 'good',
-    '-crf', '40',
-    '-an',  // Без аудіо
-    '-fs', '255000'  // Максимальний розмір файлу
-  ];
+  const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
+  isAlpha = (videoMeta.codec_name == 'gif' || videoMeta.codec_name == 'webp' || videoMeta.codec_name == 'png' || videoMeta.tags?.alpha_mode == '1')
 
-  // Аргументи для маштабування
-  args.push('-vf');
-
-  let filterString = '';
-
-  if (frameType === 'circle') {
-    // Для круглого стікера
-    filterString = `scale=${size}:${size}:force_original_aspect_ratio=increase,crop=${size}:${size},format=yuva420p,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(gt(sqrt(pow(X-${size}/2,2)+pow(Y-${size}/2,2)),${size}/2),0,255)'`;
-  } else if (frameType === 'rounded' || frameType === 'medium' || frameType === 'lite') {
-    // Для стікера із заокругленими кутами
-    let radius;
-    if (frameType === 'lite') radius = Math.round(size * 0.1);
-    else if (frameType === 'medium') radius = Math.round(size * 0.2);
-    else radius = Math.round(size * 0.3);
-
-    filterString = `scale=${size}:${size}:force_original_aspect_ratio=decrease,pad=${size}:${size}:(ow-iw)/2:(oh-ih)/2:color=white@0,format=yuva420p,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,${radius})*lt(Y,${radius})*lt(sqrt(pow(${radius}-X,2)+pow(${radius}-Y,2)),${radius}),255,if(lt(X,${radius})*gt(Y,${size-radius})*lt(sqrt(pow(${radius}-X,2)+pow(Y-(${size-radius}),2)),${radius}),255,if(gt(X,${size-radius})*lt(Y,${radius})*lt(sqrt(pow(X-(${size-radius}),2)+pow(${radius}-Y,2)),${radius}),255,if(gt(X,${size-radius})*gt(Y,${size-radius})*lt(sqrt(pow(X-(${size-radius}),2)+pow(Y-(${size-radius}),2)),${radius}),255,if(lt(X,${radius}),255,if(lt(Y,${radius}),255,if(gt(X,${size-radius}),255,if(gt(Y,${size-radius}),255,255)))))))))'`;
-  } else {
-    // Звичайний стікер
-    filterString = `scale=${size}:${size}:force_original_aspect_ratio=decrease,pad=${size}:${size}:(ow-iw)/2:(oh-ih)/2:color=white@0`;
+  if ((videoMeta.codec_name === 'gif' || isAlpha) && videoMeta.width < 512 && videoMeta.height < 512 && !(isEmoji)) {
+    let height = videoMeta.height
+    if (videoMeta.width < 150 && videoMeta.height < 150) {
+      height = 150
+      complexFilters.push({
+        filter: "scale",
+        options: { w: 150, h: 150, force_original_aspect_ratio: "decrease", flags: "neighbor" },
+        inputs: "[sticker]",
+        outputs: "[sticker]",
+      })
+    }
+    complexFilters.push({
+      filter: "pad",
+      options: { w: 512, h: height, x: -1, y: -1, color: "white@0" },
+      inputs: "[sticker]",
+    })
+    var padded = true
+  }
+  if (videoMeta.tags && videoMeta.tags.alpha_mode === '1') {
+    inputOptions.push('-c:v libvpx-vp9')
   }
 
-  args.push(filterString);
-  args.push(outputFile);
+  let input_mask
 
-  console.log('Запуск FFmpeg з аргументами:', args.join(' '));
+  if (frameType && frameType !== 'square' && !(isAlpha)) {
+    switch (frameType) {
+      case 'circle':
+        input_mask = 'circle.png'
+        complexFilters = complexFilters.concat(cropFilter)
+          .concat([{
+            filter: "scale2ref",
+            inputs: "[1:v][sticker]",
+            outputs: "[mask][sticker]",
+          },
 
-  await asyncExecFile('ffmpeg', args);
+          ])
+        break;
+      case 'rounded':
+      case 'medium':
+      case 'lite':
+        if (frameType === 'lite')
+          input_mask = 'lite.png'
+        else if (frameType === 'medium')
+          input_mask = 'medium.png'
+        else
+          input_mask = 'corner.png'
 
-  // Перевіряємо створений файл
-  const output = await asyncExecFile('ffprobe', [
-    '-v', 'quiet',
-    '-print_format', 'json',
-    '-show_format',
-    '-show_streams',
-    outputFile
-  ]);
+        firstfilter = (forceCrop) ? cropFilter : scaleFilter;
+        complexFilters = complexFilters.concat(firstfilter)
+          .concat([
+            {
+              filter: "color",
+              options: { color: "white" },
+              outputs: "[mask]",
+            },
+            {
+              filter: "scale2ref",
+              inputs: "[mask][sticker]",
+              outputs: "[mask][sticker]",
+            },
+            {
+              filter: "scale2ref",
+              options: { w: `if(gte(iw/2,${(outputDimensions.h / 2)}),ih/2,iw/2)`, h: 'ow' },
+              inputs: "[1:v][mask]",
+              outputs: "[tl][mask]",
+            },
+            {
+              filter: "split",
+              options: "4",
+              inputs: '[tl]',
+              outputs: '[tl][tr][bl][br]'
+            },
+            {
+              filter: "transpose",
+              options: { dir: "clock" },
+              inputs: '[tr]',
+              outputs: '[tr]'
+            },
+            {
+              filter: "transpose",
+              options: { dir: "clock_flip" },
+              inputs: '[br]',
+              outputs: '[br]'
+            },
+            {
+              filter: "transpose",
+              options: { dir: "cclock" },
+              inputs: '[bl]',
+              outputs: '[bl]'
+            },
+            {
+              filter: "overlay",
+              options: { x: "0", y: "0", shortest: 1 },
+              inputs: '[mask][tl]',
+              outputs: '[mask]'
+            },
+            {
+              filter: "overlay",
+              options: { x: "W-w+1", y: "0", shortest: 1 },
+              inputs: '[mask][tr]',
+              outputs: '[mask]'
+            },
+            {
+              filter: "overlay",
+              options: { x: "0", y: "H-h+1", shortest: 1 },
+              inputs: '[mask][bl]',
+              outputs: '[mask]'
+            },
+            {
+              filter: "overlay",
+              options: { x: "W-w+1", y: "H-h+1", shortest: 1 },
+              inputs: '[mask][br]',
+              outputs: '[mask]'
+            },
+          ])
+        break;
+    }
+    complexFilters = complexFilters.concat([
+      {
+        filter: "alphamerge",
+        inputs: "[sticker][mask]",
+      }])
+  } else if (!padded) {
+    let finalScaleFilter = scaleFilter
+    delete finalScaleFilter.outputs
+    if (forceCrop) {
+      finalScaleFilter.inputs = "[sticker]"
+      complexFilters = complexFilters.concat(cropFilter)
+    }
+    complexFilters.push(finalScaleFilter)
+  }
 
-  const outputMetadata = JSON.parse(output.stdout);
-  console.log('file size', (outputMetadata.format.size / 1024).toFixed(2), 'kb');
+  const fps = parseInt(videoMeta.r_frame_rate.split('/')[0]) / parseInt(videoMeta.r_frame_rate.split('/')[1])
 
-  return {
-    output: outputFile,
-    metadata: outputMetadata,
-    duration: parseFloat(outputMetadata.format.duration)
-  };
+  return new Promise((resolve, reject) => {
+    const process = ffmpeg()
+      .input(input)
+      .addInputOptions(inputOptions)
+
+    if (frameType && !(isAlpha) && input_mask) {
+      process.input(input_mask);
+    }
+
+    process
+      .noAudio()
+      .complexFilter(complexFilters)
+      .fps(Math.min(30, fps))
+      .outputOptions(
+        '-c:v', 'libvpx-vp9',
+        '-pix_fmt', 'yuva420p',
+        '-map', '0:v',
+        '-map_metadata', '-1',
+        '-fflags', '+bitexact',
+        '-flags:v', '+bitexact',
+        '-flags:a', '+bitexact',
+        '-b:v', `${bitrate}k`,
+        '-maxrate', `${bitrate * 1.5}k`,
+        '-bufsize', '300k',
+        '-fs', '255000',
+        '-crf', '40',
+        '-metadata', 'title=https://t.me/fstikbot',
+      )
+      .duration(duration)
+      .output(output)
+      .on('error', (error) => {
+        console.error(error.message, input, videoMeta)
+        reject(error)
+      })
+      .on('end', () => {
+        ffmpeg.ffprobe(output, (_err, metadata) => {
+          console.log('file size', (metadata?.format?.size / 1024).toFixed(2), 'kb')
+
+          resolve({
+            output,
+            metadata
+          })
+        })
+      })
+      .run()
+  })
 }
