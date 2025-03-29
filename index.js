@@ -268,29 +268,29 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
 
   const inputOptions = [`-t ${maxDuration}`]
 
-
   let outputDimensions = { w: 512, h: 512 }
   if (isEmoji) outputDimensions = { w: 100, h: 100 }
 
+  // Версія FFmpeg 6.x використовує format для деяких фільтрів замість w/h і width/height
   const scaleFilter = {
     filter: "scale",
-    options: { width: outputDimensions.w, height: outputDimensions.h, force_original_aspect_ratio: "decrease" },
+    options: { w: outputDimensions.w, h: outputDimensions.h, force_original_aspect_ratio: "decrease" },
     inputs: "[sticker]",
     outputs: "[sticker]"
   }
+
   const cropFilter = [{
     filter: "scale",
-    options: { width: outputDimensions.w, height: outputDimensions.h, force_original_aspect_ratio: "increase" },
+    options: { w: outputDimensions.w, h: outputDimensions.h, force_original_aspect_ratio: "increase" },
     inputs: "[sticker]",
     outputs: "[sticker]"
   },
   {
     filter: "crop",
-    options: { width: outputDimensions.w, height: outputDimensions.h },
+    options: { w: outputDimensions.w, h: outputDimensions.h },
     inputs: "[sticker]",
     outputs: "[sticker]",
-  },
-  ]
+  }]
 
   let complexFilters = [
     {
@@ -338,14 +338,14 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
         height = 150
         complexFilters.push({
           filter: "scale",
-          options: { width: 150, height: 150, force_original_aspect_ratio: "decrease", flags: "neighbor" },
+          options: { w: 150, h: 150, force_original_aspect_ratio: "decrease", flags: "neighbor" },
           inputs: "[sticker]",
           outputs: "[sticker]",
         })
       }
       complexFilters.push({
         filter: "pad",
-        options: { width: 512, height: height, x: -1, y: -1, color: "white@0" },
+        options: { w: 512, h: height, x: -1, y: -1, color: "white@0" },
         inputs: "[sticker]",
         outputs: "[sticker]"
       })
@@ -366,9 +366,7 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
               filter: "scale2ref",
               inputs: "[1:v][sticker]",
               outputs: "[mask][sticker]",
-            },
-
-            ])
+            }])
           break;
         case 'rounded':
         case 'medium':
@@ -380,7 +378,7 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
           else
             input_mask = 'corner.png'
 
-          firstfilter = (forceCrop) ? cropFilter : scaleFilter;
+          firstfilter = (forceCrop) ? cropFilter : [scaleFilter];
           complexFilters = complexFilters.concat(firstfilter)
             .concat([
               {
@@ -395,7 +393,7 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
               },
               {
                 filter: "scale2ref",
-                options: { width: `if(gte(iw/2,${(outputDimensions.h / 2)}),ih/2,iw/2)`, height: 'ow' },
+                options: { w: `if(gte(iw/2,${(outputDimensions.h / 2)}),ih/2,iw/2)`, h: 'ow' },
                 inputs: "[1:v][mask]",
                 outputs: "[tl][mask]",
               },
@@ -457,14 +455,15 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
           outputs: "[sticker]"
         }])
     } else if (!padded) {
-      let finalScaleFilter = JSON.parse(JSON.stringify(scaleFilter))
-      delete finalScaleFilter.outputs
-      finalScaleFilter.outputs = "[sticker]"
+      let finalScaleFilter = Object.assign({}, scaleFilter);
+      delete finalScaleFilter.outputs;
+      finalScaleFilter.outputs = "[sticker]";
+
       if (forceCrop) {
-        finalScaleFilter.inputs = "[sticker]"
-        complexFilters = complexFilters.concat(cropFilter)
+        finalScaleFilter.inputs = "[sticker]";
+        complexFilters = complexFilters.concat(cropFilter);
       }
-      complexFilters.push(finalScaleFilter)
+      complexFilters.push(finalScaleFilter);
     }
 
     // Safer fps calculation
@@ -480,64 +479,74 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
       }
     }
 
+    // Для відлагодження
+    console.log('Complex filters:', JSON.stringify(complexFilters, null, 2));
+
     return new Promise((resolve, reject) => {
       const process = ffmpeg()
         .input(input)
         .addInputOptions(inputOptions)
 
       if (frameType && !(isAlpha) && input_mask) {
-        process.input(input_mask);
+        try {
+          process.input(input_mask);
+        } catch (error) {
+          console.error('Error adding input mask:', error);
+          reject(error);
+          return;
+        }
       }
 
+      // Спрощений підхід для FFmpeg 6.x
       process
         .noAudio()
-        .complexFilter(complexFilters)
-        .fps(Math.min(30, fps))
-        .outputOptions(
-          '-c:v', 'libvpx-vp9',
+        .videoBitrate(`${bitrate}k`)
+        .videoCodec('libvpx-vp9')
+        .outputOptions([
           '-pix_fmt', 'yuva420p',
-          '-map', '0:v',
+          '-crf', '40',
+          '-deadline', 'good',
+          '-cpu-used', '2',
           '-map_metadata', '-1',
           '-fflags', '+bitexact',
           '-flags:v', '+bitexact',
           '-flags:a', '+bitexact',
-          '-b:v', `${bitrate}k`,
           '-maxrate', `${bitrate * 1.5}k`,
           '-bufsize', '300k',
           '-fs', '255000',
-          '-crf', '40',
-          '-cpu-used', '2',
-          '-row-mt', '1',
-          '-deadline', 'good',
-          '-movflags', '+faststart',
-          '-metadata', 'title=https://t.me/fstikbot',
-        )
+          '-metadata', 'title=https://t.me/fstikbot'
+        ])
         .duration(duration)
+        .fps(Math.min(30, fps))
+        .size(`${outputDimensions.w}x${outputDimensions.h}`)
+        .complexFilter(complexFilters, ["sticker"])
         .output(output)
         .on('error', (error) => {
-          console.error(error.message, input, videoMeta)
-          reject(error)
+          console.error('FFmpeg error:', error.message);
+          console.error('Input:', input);
+          console.error('VideoMeta:', JSON.stringify(videoMeta, null, 2));
+          reject(error);
         })
         .on('end', () => {
           ffmpeg.ffprobe(output, (_err, metadata) => {
             if (_err) {
-              console.error("Error probing output file:", _err)
-              reject(_err)
-              return
+              console.error("Error probing output file:", _err);
+              reject(_err);
+              return;
             }
 
-            console.log('file size', (metadata?.format?.size / 1024).toFixed(2), 'kb')
+            console.log('file size', (metadata?.format?.size / 1024).toFixed(2), 'kb');
 
             resolve({
               output,
               metadata
-            })
-          })
+            });
+          });
         })
-        .run()
-    })
+        .run();
+    });
   } catch (error) {
-    console.error("Error in convertToWebmSticker:", error)
-    throw error
+    console.error("Error in convertToWebmSticker:", error);
+    throw error;
   }
 }
