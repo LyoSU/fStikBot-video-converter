@@ -274,19 +274,19 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
 
   const scaleFilter = {
     filter: "scale",
-    options: { w: outputDimensions.w, h: outputDimensions.h, force_original_aspect_ratio: "decrease" },
+    options: { width: outputDimensions.w, height: outputDimensions.h, force_original_aspect_ratio: "decrease" },
     inputs: "[sticker]",
     outputs: "[sticker]"
   }
   const cropFilter = [{
     filter: "scale",
-    options: { w: outputDimensions.w, h: outputDimensions.h, force_original_aspect_ratio: "increase" },
+    options: { width: outputDimensions.w, height: outputDimensions.h, force_original_aspect_ratio: "increase" },
     inputs: "[sticker]",
     outputs: "[sticker]"
   },
   {
     filter: "crop",
-    options: { w: outputDimensions.w, h: outputDimensions.h, },
+    options: { width: outputDimensions.w, height: outputDimensions.h },
     inputs: "[sticker]",
     outputs: "[sticker]",
   },
@@ -300,200 +300,244 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
     },
   ]
 
-  const meta = await ffprobePromise(input)
+  try {
+    const meta = await ffprobePromise(input)
 
-  let duration = (meta.format.duration === 'N/A' ? 0 : parseFloat(meta.format.duration)) || maxDuration
-  if (duration > maxDuration) duration = maxDuration
-
-  if (duration > 3) {
-    if (isEmoji) {
-      bitrate = ((5 * 8192) / duration) / 100
-    } else {
-      bitrate = ((17 * 8192) / duration) / 100
+    let duration = 0
+    if (meta && meta.format) {
+      duration = (meta.format.duration === 'N/A' || meta.format.duration === undefined)
+        ? 0
+        : parseFloat(meta.format.duration) || maxDuration
+      if (duration > maxDuration) duration = maxDuration
     }
-  }
 
-  const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
-  isAlpha = (videoMeta.codec_name == 'gif' || videoMeta.codec_name == 'webp' || videoMeta.codec_name == 'png' || videoMeta.tags?.alpha_mode == '1')
+    if (duration > 3) {
+      if (isEmoji) {
+        bitrate = ((5 * 8192) / duration) / 100
+      } else {
+        bitrate = ((17 * 8192) / duration) / 100
+      }
+    }
 
-  if ((videoMeta.codec_name === 'gif' || isAlpha) && videoMeta.width < 512 && videoMeta.height < 512 && !(isEmoji)) {
-    let height = videoMeta.height
-    if (videoMeta.width < 150 && videoMeta.height < 150) {
-      height = 150
+    const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
+    if (!videoMeta) {
+      throw new Error('No video stream found')
+    }
+
+    let isAlpha = false
+    if (videoMeta.codec_name == 'gif' ||
+        videoMeta.codec_name == 'webp' ||
+        videoMeta.codec_name == 'png' ||
+        (videoMeta.tags && (videoMeta.tags.alpha_mode == '1' || videoMeta.tags.ALPHA_MODE == '1'))) {
+      isAlpha = true
+    }
+
+    if ((videoMeta.codec_name === 'gif' || isAlpha) && videoMeta.width < 512 && videoMeta.height < 512 && !(isEmoji)) {
+      let height = videoMeta.height
+      if (videoMeta.width < 150 && videoMeta.height < 150) {
+        height = 150
+        complexFilters.push({
+          filter: "scale",
+          options: { width: 150, height: 150, force_original_aspect_ratio: "decrease", flags: "neighbor" },
+          inputs: "[sticker]",
+          outputs: "[sticker]",
+        })
+      }
       complexFilters.push({
-        filter: "scale",
-        options: { w: 150, h: 150, force_original_aspect_ratio: "decrease", flags: "neighbor" },
+        filter: "pad",
+        options: { width: 512, height: height, x: -1, y: -1, color: "white@0" },
         inputs: "[sticker]",
-        outputs: "[sticker]",
+        outputs: "[sticker]"
       })
+      var padded = true
     }
-    complexFilters.push({
-      filter: "pad",
-      options: { w: 512, h: height, x: -1, y: -1, color: "white@0" },
-      inputs: "[sticker]",
-    })
-    var padded = true
-  }
-  if (videoMeta.tags && videoMeta.tags.alpha_mode === '1') {
-    inputOptions.push('-c:v libvpx-vp9')
-  }
+    if (videoMeta.tags && (videoMeta.tags.alpha_mode === '1' || videoMeta.tags.ALPHA_MODE === '1')) {
+      inputOptions.push('-c:v libvpx-vp9')
+    }
 
-  let input_mask
+    let input_mask
 
-  if (frameType && frameType !== 'square' && !(isAlpha)) {
-    switch (frameType) {
-      case 'circle':
-        input_mask = 'circle.png'
-        complexFilters = complexFilters.concat(cropFilter)
-          .concat([{
-            filter: "scale2ref",
-            inputs: "[1:v][sticker]",
-            outputs: "[mask][sticker]",
-          },
-
-          ])
-        break;
-      case 'rounded':
-      case 'medium':
-      case 'lite':
-        if (frameType === 'lite')
-          input_mask = 'lite.png'
-        else if (frameType === 'medium')
-          input_mask = 'medium.png'
-        else
-          input_mask = 'corner.png'
-
-        firstfilter = (forceCrop) ? cropFilter : scaleFilter;
-        complexFilters = complexFilters.concat(firstfilter)
-          .concat([
-            {
-              filter: "color",
-              options: { color: "white" },
-              outputs: "[mask]",
-            },
-            {
+    if (frameType && frameType !== 'square' && !(isAlpha)) {
+      switch (frameType) {
+        case 'circle':
+          input_mask = 'circle.png'
+          complexFilters = complexFilters.concat(cropFilter)
+            .concat([{
               filter: "scale2ref",
-              inputs: "[mask][sticker]",
+              inputs: "[1:v][sticker]",
               outputs: "[mask][sticker]",
             },
-            {
-              filter: "scale2ref",
-              options: { w: `if(gte(iw/2,${(outputDimensions.h / 2)}),ih/2,iw/2)`, h: 'ow' },
-              inputs: "[1:v][mask]",
-              outputs: "[tl][mask]",
-            },
-            {
-              filter: "split",
-              options: "4",
-              inputs: '[tl]',
-              outputs: '[tl][tr][bl][br]'
-            },
-            {
-              filter: "transpose",
-              options: { dir: "clock" },
-              inputs: '[tr]',
-              outputs: '[tr]'
-            },
-            {
-              filter: "transpose",
-              options: { dir: "clock_flip" },
-              inputs: '[br]',
-              outputs: '[br]'
-            },
-            {
-              filter: "transpose",
-              options: { dir: "cclock" },
-              inputs: '[bl]',
-              outputs: '[bl]'
-            },
-            {
-              filter: "overlay",
-              options: { x: "0", y: "0", shortest: 1 },
-              inputs: '[mask][tl]',
-              outputs: '[mask]'
-            },
-            {
-              filter: "overlay",
-              options: { x: "W-w+1", y: "0", shortest: 1 },
-              inputs: '[mask][tr]',
-              outputs: '[mask]'
-            },
-            {
-              filter: "overlay",
-              options: { x: "0", y: "H-h+1", shortest: 1 },
-              inputs: '[mask][bl]',
-              outputs: '[mask]'
-            },
-            {
-              filter: "overlay",
-              options: { x: "W-w+1", y: "H-h+1", shortest: 1 },
-              inputs: '[mask][br]',
-              outputs: '[mask]'
-            },
-          ])
-        break;
+
+            ])
+          break;
+        case 'rounded':
+        case 'medium':
+        case 'lite':
+          if (frameType === 'lite')
+            input_mask = 'lite.png'
+          else if (frameType === 'medium')
+            input_mask = 'medium.png'
+          else
+            input_mask = 'corner.png'
+
+          firstfilter = (forceCrop) ? cropFilter : scaleFilter;
+          complexFilters = complexFilters.concat(firstfilter)
+            .concat([
+              {
+                filter: "color",
+                options: { color: "white" },
+                outputs: "[mask]",
+              },
+              {
+                filter: "scale2ref",
+                inputs: "[mask][sticker]",
+                outputs: "[mask][sticker]",
+              },
+              {
+                filter: "scale2ref",
+                options: { width: `if(gte(iw/2,${(outputDimensions.h / 2)}),ih/2,iw/2)`, height: 'ow' },
+                inputs: "[1:v][mask]",
+                outputs: "[tl][mask]",
+              },
+              {
+                filter: "split",
+                options: "4",
+                inputs: '[tl]',
+                outputs: '[tl][tr][bl][br]'
+              },
+              {
+                filter: "transpose",
+                options: { dir: "clock" },
+                inputs: '[tr]',
+                outputs: '[tr]'
+              },
+              {
+                filter: "transpose",
+                options: { dir: "clock_flip" },
+                inputs: '[br]',
+                outputs: '[br]'
+              },
+              {
+                filter: "transpose",
+                options: { dir: "cclock" },
+                inputs: '[bl]',
+                outputs: '[bl]'
+              },
+              {
+                filter: "overlay",
+                options: { x: "0", y: "0", shortest: 1 },
+                inputs: '[mask][tl]',
+                outputs: '[mask]'
+              },
+              {
+                filter: "overlay",
+                options: { x: "W-w+1", y: "0", shortest: 1 },
+                inputs: '[mask][tr]',
+                outputs: '[mask]'
+              },
+              {
+                filter: "overlay",
+                options: { x: "0", y: "H-h+1", shortest: 1 },
+                inputs: '[mask][bl]',
+                outputs: '[mask]'
+              },
+              {
+                filter: "overlay",
+                options: { x: "W-w+1", y: "H-h+1", shortest: 1 },
+                inputs: '[mask][br]',
+                outputs: '[mask]'
+              },
+            ])
+          break;
+      }
+      complexFilters = complexFilters.concat([
+        {
+          filter: "alphamerge",
+          inputs: "[sticker][mask]",
+          outputs: "[sticker]"
+        }])
+    } else if (!padded) {
+      let finalScaleFilter = JSON.parse(JSON.stringify(scaleFilter))
+      delete finalScaleFilter.outputs
+      finalScaleFilter.outputs = "[sticker]"
+      if (forceCrop) {
+        finalScaleFilter.inputs = "[sticker]"
+        complexFilters = complexFilters.concat(cropFilter)
+      }
+      complexFilters.push(finalScaleFilter)
     }
-    complexFilters = complexFilters.concat([
-      {
-        filter: "alphamerge",
-        inputs: "[sticker][mask]",
-      }])
-  } else if (!padded) {
-    let finalScaleFilter = scaleFilter
-    delete finalScaleFilter.outputs
-    if (forceCrop) {
-      finalScaleFilter.inputs = "[sticker]"
-      complexFilters = complexFilters.concat(cropFilter)
-    }
-    complexFilters.push(finalScaleFilter)
-  }
 
-  const fps = parseInt(videoMeta.r_frame_rate.split('/')[0]) / parseInt(videoMeta.r_frame_rate.split('/')[1])
-
-  return new Promise((resolve, reject) => {
-    const process = ffmpeg()
-      .input(input)
-      .addInputOptions(inputOptions)
-
-    if (frameType && !(isAlpha) && input_mask) {
-      process.input(input_mask);
+    // Safer fps calculation
+    let fps = 30; // default value
+    if (videoMeta.r_frame_rate) {
+      const parts = videoMeta.r_frame_rate.split('/');
+      if (parts.length === 2) {
+        const num = parseInt(parts[0]);
+        const den = parseInt(parts[1]);
+        if (!isNaN(num) && !isNaN(den) && den !== 0) {
+          fps = num / den;
+        }
+      }
     }
 
-    process
-      .noAudio()
-      .complexFilter(complexFilters)
-      .fps(Math.min(30, fps))
-      .outputOptions(
-        '-c:v', 'libvpx-vp9',
-        // '-pix_fmt', 'yuva420p',
-        '-map', '0:v',
-        '-map_metadata', '-1',
-        '-fflags', '+bitexact',
-        '-flags:v', '+bitexact',
-        '-flags:a', '+bitexact',
-        '-b:v', `${bitrate}k`,
-        '-maxrate', `${bitrate * 1.5}k`,
-        '-bufsize', '300k',
-        '-fs', '255000',
-        '-crf', '40',
-        '-metadata', 'title=https://t.me/fstikbot',
-      )
-      .duration(duration)
-      .output(output)
-      .on('error', (error) => {
-        console.error(error.message, input, videoMeta)
-        reject(error)
-      })
-      .on('end', () => {
-        ffmpeg.ffprobe(output, (_err, metadata) => {
-          console.log('file size', (metadata?.format?.size / 1024).toFixed(2), 'kb')
+    return new Promise((resolve, reject) => {
+      const process = ffmpeg()
+        .input(input)
+        .addInputOptions(inputOptions)
 
-          resolve({
-            output,
-            metadata
+      if (frameType && !(isAlpha) && input_mask) {
+        process.input(input_mask);
+      }
+
+      process
+        .noAudio()
+        .complexFilter(complexFilters)
+        .fps(Math.min(30, fps))
+        .outputOptions(
+          '-c:v', 'libvpx-vp9',
+          '-pix_fmt', 'yuva420p',
+          '-map', '0:v',
+          '-map_metadata', '-1',
+          '-fflags', '+bitexact',
+          '-flags:v', '+bitexact',
+          '-flags:a', '+bitexact',
+          '-b:v', `${bitrate}k`,
+          '-maxrate', `${bitrate * 1.5}k`,
+          '-bufsize', '300k',
+          '-fs', '255000',
+          '-crf', '40',
+          '-cpu-used', '2',
+          '-row-mt', '1',
+          '-deadline', 'good',
+          '-movflags', '+faststart',
+          '-metadata', 'title=https://t.me/fstikbot',
+        )
+        .duration(duration)
+        .output(output)
+        .on('error', (error) => {
+          console.error(error.message, input, videoMeta)
+          reject(error)
+        })
+        .on('end', () => {
+          ffmpeg.ffprobe(output, (_err, metadata) => {
+            if (_err) {
+              console.error("Error probing output file:", _err)
+              reject(_err)
+              return
+            }
+
+            console.log('file size', (metadata?.format?.size / 1024).toFixed(2), 'kb')
+
+            resolve({
+              output,
+              metadata
+            })
           })
         })
-      })
-      .run()
-  })
+        .run()
+    })
+  } catch (error) {
+    console.error("Error in convertToWebmSticker:", error)
+    throw error
+  }
 }
