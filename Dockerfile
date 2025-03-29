@@ -12,7 +12,6 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     nodejs \
     npm \
-    redis-server \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
@@ -44,22 +43,16 @@ COPY .env* ./
 # Create default .env file if it doesn't exist
 RUN touch .env
 
-# Expose port for Redis (if you need to expose it)
-EXPOSE 6379
-
-# Setup Redis server for local development
-RUN sed -i 's/bind 127.0.0.1/bind 0.0.0.0/g' /etc/redis/redis.conf
-
 # Set default environment variables (will be overridden by .env file if it exists)
-ENV REDIS_HOST=localhost \
+ENV REDIS_HOST=redis \
     REDIS_PORT=6379 \
     MAX_PROCESS=4 \
     DEFAULT_BITRATE=500 \
     DEFAULT_MAX_DURATION=10
 
 # Commands to run
-CMD service redis-server start && \
-    echo "FFmpeg version:" && \
+CMD echo "FFmpeg version:" && \
     ffmpeg -version && \
     echo "Starting application with environment from .env file..." && \
+    echo "Connecting to Redis at: ${REDIS_HOST}:${REDIS_PORT}" && \
     node -r dotenv/config index.js
