@@ -10,10 +10,14 @@ RUN apt-get update && apt-get install -y \
     apt-transport-https \
     ca-certificates \
     gnupg \
-    nodejs \
-    npm \
     wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 18.x
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && node --version \
+    && npm --version
 
 # Install specific version of FFmpeg 4.4.4
 RUN apt-get update && \
@@ -55,5 +59,5 @@ ENV REDIS_HOST=redis \
     DEFAULT_BITRATE=500 \
     DEFAULT_MAX_DURATION=10
 
-# Commands to run
+# Commands to run with JSON format
 CMD ["sh", "-c", "echo 'FFmpeg version:' && ffmpeg -version && echo 'Starting application with environment from .env file...' && echo 'Connecting to Redis at: ${REDIS_HOST}:${REDIS_PORT}' && node -r dotenv/config index.js"]
