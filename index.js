@@ -7,6 +7,8 @@ const ffmpeg = require('fluent-ffmpeg')
 const temp = require('temp').track()
 const got = require('got')
 const Queue = require('bull')
+const path = require('path')
+const https = require('https')
 
 
 const numOfCpus = parseInt(process.env.MAX_PROCESS) || os.cpus().length
@@ -25,8 +27,46 @@ async function asyncExecFile (app, args) {
   })
 }
 
+// Функція для завантаження файлу з URL
+async function downloadFile(url, destinationPath) {
+  return new Promise((resolve, reject) => {
+    console.log(`Завантаження файлу з: ${url}`)
+
+    // Створюємо stream для запису файлу
+    const fileStream = fs.createWriteStream(destinationPath);
+
+    // Виконуємо запит для завантаження
+    https.get(url, (response) => {
+      // Перевірка кода відповіді
+      if (response.statusCode !== 200) {
+        reject(new Error(`Failed to download file: Status code ${response.statusCode}`));
+        return;
+      }
+
+      // Перенаправляємо дані у файл
+      response.pipe(fileStream);
+
+      // Обробка подій
+      fileStream.on('finish', () => {
+        fileStream.close();
+        console.log(`Файл успішно завантажено в: ${destinationPath}`);
+        resolve(destinationPath);
+      });
+    }).on('error', (err) => {
+      // Видаляємо файл у випадку помилки
+      fs.unlink(destinationPath, () => {});
+      reject(err);
+    });
+
+    // Обробка помилок запису файлу
+    fileStream.on('error', (err) => {
+      fs.unlink(destinationPath, () => {});
+      reject(err);
+    });
+  });
+}
+
 // Функція для модифікації тривалості WebM файлів
-// Модифікована для кращої підтримки в FFmpeg 7
 async function modifyWebmFileDuration(filePath) {
   try {
     // Читаємо файл як буфер
@@ -53,7 +93,7 @@ async function modifyWebmFileDuration(filePath) {
 }
 
 
-const redisConfig =  {
+const redisConfig = {
   port: process.env.REDIS_PORT,
   host: process.env.REDIS_HOST,
   password: process.env.REDIS_PASSWORD
@@ -64,7 +104,7 @@ const removebgQueue = new Queue('removebg', {
 })
 
 if (os.platform() === '1darwin') {
-  async function removebg (tempInput) {
+  async function removebg(tempInput) {
     console.time('🖼️  removebg')
     const output = await asyncExecFile('shortcuts',
       [
@@ -101,7 +141,7 @@ if (os.platform() === '1darwin') {
       done(err)
     })
 
-    await fsp.unlink(tempInput).catch((() => {}))
+    await fsp.unlink(tempInput).catch((() => { }))
 
     const file = output.stdout
 
@@ -110,7 +150,7 @@ if (os.platform() === '1darwin') {
       done(err)
     });
 
-    await fsp.unlink(file).catch((() => {}))
+    await fsp.unlink(file).catch((() => { }))
 
     if (content) {
       done(null, {
@@ -188,87 +228,130 @@ convertQueue.process(numOfCpus, async (job, done) => {
   let maxDuration = (job.data.maxDuration) || process.env.DEFAULT_MAX_DURATION || 10
   let isEmoji = (job.data.isEmoji) || false
 
-  let input
-  if (job.data.fileData) {
-    input = `data:video/mp4;base64,${job.data.fileData}`
-  } else {
-    input = job.data.fileUrl
-  }
+  let input, tempLocalFile
 
-  const file = await convertToWebmSticker(input, job.data.frameType, job.data.forceCrop, isEmoji, output, bitrate, maxDuration).catch((err) => {
-    err.message = `${os.hostname} ::: ${err.message}`
-    done(err)
-  })
+  try {
+    // Якщо дані передані як Base64
+    if (job.data.fileData) {
+      input = `data:video/mp4;base64,${job.data.fileData}`
+    }
+    // Якщо URL - перевіряємо чи це URL Telegram
+    else if (job.data.fileUrl) {
+      const fileUrl = job.data.fileUrl
 
-  if (file) {
-    let fileConent, tempModified
+      // Якщо URL з Telegram API - завантажуємо його локально спершу
+      if (fileUrl.includes('api.telegram.org')) {
+        // Створюємо тимчасовий файл для завантаження
+        const fileExt = path.extname(fileUrl).toLowerCase()
+        tempLocalFile = temp.path({ suffix: fileExt })
 
-    if (!job.data.isEmoji && file?.metadata?.format?.duration > 3) {
-      tempModified = temp.path({ suffix: '.webm' })
+        // Завантажуємо файл
+        await downloadFile(fileUrl, tempLocalFile)
 
-      await fsp.copyFile(output, tempModified).catch((err) => {
-        console.error(err)
-        done(err)
-      })
-
-      // Модифікуємо тривалість WebM файлу
-      await modifyWebmFileDuration(tempModified).catch((err) => {
-        console.error(err)
-        done(err)
-      })
-
-      fileConent = tempModified
-    } else {
-      if (job.data.isEmoji && file?.metadata?.format?.duration > 3) {
-        const tempTrimmed = temp.path({ suffix: '.webm' })
-
-        // trim to 2.9 seconds
-        await asyncExecFile('ffmpeg', [
-          // Додано явний декодер для вхідного WebM файлу
-          '-c:v', 'libvpx-vp9',
-          '-i', output,
-          '-ss', '0',
-          '-t', '2.9',
-          // Явно зберігаємо формат з альфа-каналом
-          '-pix_fmt', 'yuva420p',
-          // Додано збереження метаданих альфа-каналу
-          '-metadata:s:v', 'alpha_mode=1',
-          // Вимкнено auto-alt-ref для кращої підтримки альфа-каналу
-          '-auto-alt-ref', '0',
-          '-c', 'copy',
-          tempTrimmed
-        ]).catch((err) => {
-          console.error(err)
-          done(err)
-        })
-
-        await fsp.unlink(output).catch(() => {})
-
-        fileConent = tempTrimmed
+        // Використовуємо локальний файл як вхідний
+        input = tempLocalFile
+        console.log(`Використовуємо локальний файл: ${input}`)
       } else {
-        fileConent = output
+        // Для інших URL використовуємо URL напряму
+        input = fileUrl
       }
+    } else {
+      throw new Error('Не вказано джерело файлу')
     }
 
-    const content = await fsp.readFile(fileConent, { encoding: 'base64' }).catch((err) => {
-      console.error(err)
-      done(err)
-    });
-
-    done(null, {
-      metadata: file.metadata,
-      content,
-      input: job.data.input
+    const file = await convertToWebmSticker(input, job.data.frameType, job.data.forceCrop, isEmoji, output, bitrate, maxDuration).catch((err) => {
+      err.message = `${os.hostname} ::: ${err.message}`
+      throw err
     })
 
-    if (tempModified) {
-      await fsp.unlink(tempModified).catch(() => {})
+    if (file) {
+      let fileConent, tempModified
+
+      if (!job.data.isEmoji && file?.metadata?.format?.duration > 3) {
+        tempModified = temp.path({ suffix: '.webm' })
+
+        await fsp.copyFile(output, tempModified).catch((err) => {
+          console.error(err)
+          throw err
+        })
+
+        // Модифікуємо тривалість WebM файлу
+        await modifyWebmFileDuration(tempModified).catch((err) => {
+          console.error(err)
+          throw err
+        })
+
+        fileConent = tempModified
+      } else {
+        if (job.data.isEmoji && file?.metadata?.format?.duration > 3) {
+          const tempTrimmed = temp.path({ suffix: '.webm' })
+
+          // trim to 2.9 seconds
+          await asyncExecFile('ffmpeg', [
+            // Додано явний декодер для вхідного WebM файлу
+            '-c:v', 'libvpx-vp9',
+            '-i', output,
+            '-ss', '0',
+            '-t', '2.9',
+            // Явно зберігаємо формат з альфа-каналом
+            '-pix_fmt', 'yuva420p',
+            // Додано збереження метаданих альфа-каналу
+            '-metadata:s:v', 'alpha_mode=1',
+            // Вимкнено auto-alt-ref для кращої підтримки альфа-каналу
+            '-auto-alt-ref', '0',
+            '-c', 'copy',
+            tempTrimmed
+          ]).catch((err) => {
+            console.error(err)
+            throw err
+          })
+
+          await fsp.unlink(output).catch(() => { })
+
+          fileConent = tempTrimmed
+        } else {
+          fileConent = output
+        }
+      }
+
+      const content = await fsp.readFile(fileConent, { encoding: 'base64' }).catch((err) => {
+        console.error(err)
+        throw err
+      });
+
+      // Видаляємо тимчасові файли
+      if (tempLocalFile) {
+        await fsp.unlink(tempLocalFile).catch(() => { })
+      }
+
+      if (tempModified) {
+        await fsp.unlink(tempModified).catch(() => { })
+      }
+
+      await fsp.unlink(output).catch(() => { })
+
+      console.timeEnd(consoleName)
+
+      done(null, {
+        metadata: file.metadata,
+        content,
+        input: job.data.input
+      })
+    } else {
+      throw new Error('Конвертація не завершена')
     }
+  } catch (err) {
+    // Видаляємо тимчасові файли у випадку помилки
+    if (tempLocalFile) {
+      await fsp.unlink(tempLocalFile).catch(() => { })
+    }
+
+    await fsp.unlink(output).catch(() => { })
+
+    console.timeEnd(consoleName)
+    console.error(`Помилка конвертації: ${err.message}`)
+    done(err)
   }
-
-  await fsp.unlink(output).catch(() => {})
-
-  console.timeEnd(consoleName)
 })
 
 const ffprobePromise = (file) => {
@@ -288,8 +371,25 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
     maxDuration = 3
   }
 
-  // Додано явний декодер для вхідних файлів для кращої підтримки альфа-каналу
-  const inputOptions = [`-t ${maxDuration}`, '-c:v', 'libvpx-vp9']
+  // Базові опції введення
+  const inputOptions = [`-t ${maxDuration}`]
+
+  // Додаємо спеціальні опції для URL-адрес
+  if (typeof input === 'string' && input.startsWith('http')) {
+    inputOptions.push(
+      '-protocol_whitelist', 'file,http,https,tcp,tls',
+      '-reconnect', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '5'
+    )
+  }
+
+  // Додаємо явний декодер для відеофайлів
+  if (input.endsWith('.mp4') || input.endsWith('.mov') || input.endsWith('.MOV')) {
+    inputOptions.push('-c:v', 'h264')
+  } else if (input.endsWith('.webm')) {
+    inputOptions.push('-c:v', 'libvpx-vp9')
+  }
 
   let outputDimensions = { w: 512, h: 512 }
   if (isEmoji) outputDimensions = { w: 100, h: 100 }
@@ -322,7 +422,9 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
     },
   ]
 
+  console.log(`Аналіз вхідного файлу: ${input}`)
   const meta = await ffprobePromise(input)
+  console.log(`Метадані отримані. Формат: ${meta.format.format_name}`)
 
   let duration = (meta.format.duration === 'N/A' ? 0 : parseFloat(meta.format.duration)) || maxDuration
   if (duration > maxDuration) duration = maxDuration
@@ -336,10 +438,11 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
   }
 
   const videoMeta = meta.streams.find(stream => stream.codec_type === 'video')
+  console.log(`Відеокодек: ${videoMeta.codec_name}, формат пікселів: ${videoMeta.pix_fmt}`)
 
   // Перевірка на наявність alpha_mode в метаданих
   let isAlpha = (videoMeta.codec_name == 'gif' || videoMeta.codec_name == 'webp' || videoMeta.codec_name == 'png' ||
-                videoMeta.tags?.alpha_mode == '1')
+    videoMeta.tags?.alpha_mode == '1')
 
   // Додаткова перевірка на формат пікселів
   if (videoMeta.pix_fmt && videoMeta.pix_fmt.includes('yuva')) {
@@ -487,9 +590,22 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
   const fps = parseInt(videoMeta.r_frame_rate.split('/')[0]) / parseInt(videoMeta.r_frame_rate.split('/')[1])
 
   return new Promise((resolve, reject) => {
+    console.log('Початок конвертації з наступними опціями:')
+    console.log(`- Вхід: ${input}`)
+    console.log(`- Вихід: ${output}`)
+    console.log(`- Бітрейт: ${bitrate}k`)
+    console.log(`- FPS: ${Math.min(30, fps)}`)
+    console.log(`- Опції вводу:`, inputOptions)
+
     const process = ffmpeg()
       .input(input)
       .addInputOptions(inputOptions)
+      .on('start', (commandLine) => {
+        console.log('FFmpeg команда:', commandLine)
+      })
+      .on('stderr', (stderrLine) => {
+        console.log('FFmpeg stderr:', stderrLine)
+      })
 
     if (frameType && !(isAlpha) && input_mask) {
       process.input(input_mask);
@@ -522,12 +638,23 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
       .duration(duration)
       .output(output)
       .on('error', (error) => {
-        console.error(error.message, input, videoMeta)
+        console.error("FFmpeg помилка:", error.message)
+        console.error("Тип вхідного медіа:", typeof input)
+        if (videoMeta) {
+          console.error("Метадані відео:", JSON.stringify(videoMeta, null, 2))
+        }
         reject(error)
       })
       .on('end', () => {
+        console.log(`Конвертація завершена: ${output}`)
         ffmpeg.ffprobe(output, (_err, metadata) => {
-          console.log('file size', (metadata?.format?.size / 1024).toFixed(2), 'kb')
+          if (_err) {
+            console.error("Помилка при отриманні метаданих вихідного файлу:", _err)
+            reject(_err)
+            return
+          }
+
+          console.log('Розмір файлу:', (metadata?.format?.size / 1024).toFixed(2), 'kb')
 
           resolve({
             output,
