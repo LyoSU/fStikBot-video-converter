@@ -70,16 +70,14 @@ RUN touch .env
 # Set default environment variables (will be overridden by .env file if it exists)
 ENV REDIS_HOST=redis \
     REDIS_PORT=6379 \
-    MAX_PROCESS=4 \
-    DEFAULT_BITRATE=500 \
-    DEFAULT_MAX_DURATION=10 \
     NODE_ENV=production
 
-# Set proper tini as entrypoint for better signal handling and zombie process reaping
-RUN apt-get update && apt-get install -y tini && rm -rf /var/lib/apt/lists/*
+# Install tini init system from official releases
+RUN wget -O /usr/local/bin/tini https://github.com/krallin/tini/releases/download/v0.19.0/tini && \
+    chmod +x /usr/local/bin/tini
 
 # Use tini as entrypoint for proper signal handling in containerized environments
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/local/bin/tini", "--"]
 
 # Commands to run with JSON format
 CMD ["node", "-r", "dotenv/config", "index.js"]
