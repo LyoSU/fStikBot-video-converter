@@ -57,7 +57,14 @@ ENV REDIS_HOST=redis \
     REDIS_PORT=6379 \
     MAX_PROCESS=4 \
     DEFAULT_BITRATE=500 \
-    DEFAULT_MAX_DURATION=10
+    DEFAULT_MAX_DURATION=10 \
+    NODE_ENV=production
+
+# Set proper tini as entrypoint for better signal handling and zombie process reaping
+RUN apt-get update && apt-get install -y tini && rm -rf /var/lib/apt/lists/*
+
+# Use tini as entrypoint for proper signal handling in containerized environments
+ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Commands to run with JSON format
-CMD ["sh", "-c", "echo 'FFmpeg version:' && ffmpeg -version && echo 'Starting application with environment from .env file...' && echo 'Connecting to Redis at: ${REDIS_HOST}:${REDIS_PORT}' && node -r dotenv/config index.js"]
+CMD ["node", "-r", "dotenv/config", "index.js"]
