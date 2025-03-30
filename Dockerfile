@@ -19,17 +19,32 @@ RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash - \
     && node --version \
     && npm --version
 
-# Install specific version of FFmpeg 4.4.4
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    python3-software-properties \
-    software-properties-common \
-    && add-apt-repository -y ppa:jonathonf/ffmpeg \
-    && apt-get update \
-    && apt-get install -y ffmpeg \
-    && apt-mark hold ffmpeg \
-    && ffmpeg -version | grep "ffmpeg version" \
-    && rm -rf /var/lib/apt/lists/*
+# Install dependencies needed to build FFmpeg
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    yasm \
+    pkg-config \
+    libx264-dev \
+    libmp3lame-dev \
+    libopus-dev \
+    libvpx-dev \
+    libfdk-aac-dev \
+    nasm
+
+# Download and install FFmpeg 4.4.4 from source
+RUN cd /tmp && \
+    wget https://ffmpeg.org/releases/ffmpeg-4.4.4.tar.bz2 && \
+    tar -xjf ffmpeg-4.4.4.tar.bz2 && \
+    cd ffmpeg-4.4.4 && \
+    ./configure --enable-gpl --enable-nonfree --enable-libfdk-aac --enable-libmp3lame --enable-libopus --enable-libvpx --enable-libx264 && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    ffmpeg -version | grep "ffmpeg version 4.4.4" && \
+    cd /tmp && \
+    rm -rf ffmpeg-4.4.4 ffmpeg-4.4.4.tar.bz2 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
