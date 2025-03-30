@@ -7,6 +7,9 @@ const ffmpeg = require('fluent-ffmpeg')
 const temp = require('temp').track()
 const got = require('got')
 const Queue = require('bull')
+const https = require('https')
+const http = require('http')
+const path = require('path')
 
 
 const numOfCpus = parseInt(process.env.MAX_PROCESS) || os.cpus().length
@@ -23,6 +26,53 @@ async function asyncExecFile (app, args) {
       }
     })
   })
+}
+
+// Download file from URL to a local temporary path
+async function downloadFile(url) {
+  console.log('Downloading file from URL:', url);
+
+  return new Promise((resolve, reject) => {
+    const tempPath = temp.path({ suffix: path.extname(url) || '.mp4' });
+
+    const protocol = url.startsWith('https:') ? https : http;
+
+    const request = protocol.get(url, (response) => {
+      // Handle redirects
+      if (response.statusCode === 301 || response.statusCode === 302) {
+        try {
+          return resolve(downloadFile(response.headers.location));
+        } catch (redirectErr) {
+          return reject(redirectErr);
+        }
+      }
+
+      if (response.statusCode !== 200) {
+        return reject(new Error(`Failed to download file: ${response.statusCode}`));
+      }
+
+      const fileStream = fs.createWriteStream(tempPath);
+      response.pipe(fileStream);
+
+      fileStream.on('finish', () => {
+        fileStream.close();
+        console.log('File downloaded successfully to:', tempPath);
+        resolve(tempPath);
+      });
+
+      fileStream.on('error', (err) => {
+        fs.unlink(tempPath, () => {}); // Delete the file on error
+        reject(err);
+      });
+    });
+
+    request.on('error', (err) => {
+      fs.unlink(tempPath, () => {}); // Delete the file on error
+      reject(err);
+    });
+
+    request.end();
+  });
 }
 
 async function modifyWebmFileDuration(filePath) {
@@ -167,6 +217,7 @@ convertQueue.process(numOfCpus, async (job, done) => {
   }
 
   const output = temp.path({ suffix: '.webm' })
+  let downloadedInputFile = null;
 
   const consoleName = `📹 job convert #${job.id}`
 
@@ -176,90 +227,123 @@ convertQueue.process(numOfCpus, async (job, done) => {
   let isEmoji = (job.data.isEmoji) || false
 
   let input
-  if (job.data.fileData) {
-    input = `data:video/mp4;base64,${job.data.fileData}`
-  } else {
-    input = job.data.fileUrl
-  }
-
-  const file = await convertToWebmSticker(input, job.data.frameType, job.data.forceCrop, isEmoji, output, bitrate, maxDuration).catch((err) => {
-    err.message = `${os.hostname} ::: ${err.message}`
-    done(err)
-  })
-
-  if (file) {
-    let fileConent, tempModified
-
-    if (!job.data.isEmoji && file?.metadata?.format?.duration > 3) {
-      tempModified = temp.path({ suffix: '.webm' })
-
-      await fsp.copyFile(output, tempModified).catch((err) => {
-        console.error(err)
-        done(err)
-      })
-
-      await modifyWebmFileDuration(tempModified).catch((err) => {
-        console.error(err)
-        done(err)
-      })
-
-      fileConent = tempModified
+  try {
+    if (job.data.fileData) {
+      input = `data:video/mp4;base64,${job.data.fileData}`
     } else {
-      if (job.data.isEmoji && file?.metadata?.format?.duration > 3) {
-        const tempTrimmed = temp.path({ suffix: '.webm' })
+      // Check if input is an HTTPS URL
+      if (job.data.fileUrl && job.data.fileUrl.startsWith('https://')) {
+        try {
+          // Try to download the file first to handle HTTPS URLs
+          downloadedInputFile = await downloadFile(job.data.fileUrl);
+          input = downloadedInputFile;
+        } catch (downloadError) {
+          console.error('Error downloading file, falling back to direct URL:', downloadError);
+          input = job.data.fileUrl;
+        }
+      } else {
+        input = job.data.fileUrl;
+      }
+    }
 
-        // trim to 2.9 seconds
-        await asyncExecFile('ffmpeg', [
-          '-i', output,
-          '-ss', '0',
-          '-t', '2.9',
-          '-c', 'copy',
-          tempTrimmed
-        ]).catch((err) => {
+    const file = await convertToWebmSticker(input, job.data.frameType, job.data.forceCrop, isEmoji, output, bitrate, maxDuration).catch((err) => {
+      err.message = `${os.hostname} ::: ${err.message}`
+      done(err)
+      return null;
+    })
+
+    if (file) {
+      let fileConent, tempModified
+
+      if (!job.data.isEmoji && file?.metadata?.format?.duration > 3) {
+        tempModified = temp.path({ suffix: '.webm' })
+
+        await fsp.copyFile(output, tempModified).catch((err) => {
           console.error(err)
           done(err)
         })
 
-        await fsp.unlink(output).catch(() => {})
+        await modifyWebmFileDuration(tempModified).catch((err) => {
+          console.error(err)
+          done(err)
+        })
 
-        fileConent = tempTrimmed
+        fileConent = tempModified
       } else {
-        fileConent = output
+        if (job.data.isEmoji && file?.metadata?.format?.duration > 3) {
+          const tempTrimmed = temp.path({ suffix: '.webm' })
+
+          // trim to 2.9 seconds
+          await asyncExecFile('ffmpeg', [
+            '-i', output,
+            '-ss', '0',
+            '-t', '2.9',
+            '-c', 'copy',
+            tempTrimmed
+          ]).catch((err) => {
+            console.error(err)
+            done(err)
+          })
+
+          await fsp.unlink(output).catch(() => {})
+
+          fileConent = tempTrimmed
+        } else {
+          fileConent = output
+        }
+      }
+
+      const content = await fsp.readFile(fileConent, { encoding: 'base64' }).catch((err) => {
+        console.error(err)
+        done(err)
+      });
+
+      done(null, {
+        metadata: file.metadata,
+        content,
+        input: job.data.input
+      })
+
+      if (tempModified) {
+        await fsp.unlink(tempModified).catch(() => {})
       }
     }
 
-    const content = await fsp.readFile(fileConent, { encoding: 'base64' }).catch((err) => {
-      console.error(err)
-      done(err)
-    });
+    await fsp.unlink(output).catch(() => {})
 
-    done(null, {
-      metadata: file.metadata,
-      content,
-      input: job.data.input
-    })
+    // Clean up downloaded input file if it exists
+    if (downloadedInputFile) {
+      await fsp.unlink(downloadedInputFile).catch(() => {})
+    }
 
-    if (tempModified) {
-      await fsp.unlink(tempModified).catch(() => {})
+    console.timeEnd(consoleName)
+  } catch (error) {
+    console.error('Error in job processing:', error);
+    done(error);
+
+    // Clean up downloaded input file if it exists
+    if (downloadedInputFile) {
+      await fsp.unlink(downloadedInputFile).catch(() => {})
     }
   }
-
-  await fsp.unlink(output).catch(() => {})
-
-  console.timeEnd(consoleName)
 })
 
 const ffprobePromise = (file) => {
   return new Promise((resolve, reject) => {
     ffmpeg.ffprobe(file, (err, metadata) => {
       if (err) {
-        reject(err)
+        // Check if the error is related to HTTPS protocol
+        if (err.message && err.message.includes('Protocol not found')) {
+          reject(new Error('HTTPS protocol not supported by FFmpeg: ' + err.message));
+        } else {
+          reject(err);
+        }
       } else {
-        resolve(metadata)
+        resolve(metadata);
       }
-    })
-  })
-}
+    });
+  });
+};
 
 async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output, bitrate, maxDuration) {
   if (isEmoji) {
