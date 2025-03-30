@@ -24,7 +24,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3-software-properties \
     software-properties-common \
-    && add-apt-repository -y ppa:jonathonf/ffmpeg-4 \
+    && add-apt-repository -y ppa:jonathonf/ffmpeg \
     && apt-get update \
     && apt-get install -y ffmpeg \
     && apt-mark hold ffmpeg \
