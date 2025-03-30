@@ -318,7 +318,7 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
     if (!videoMeta) {
       throw new Error('No video stream found')
     }
-    
+
     const isAlpha = (videoMeta.codec_name == 'gif' || videoMeta.codec_name == 'webp' || videoMeta.codec_name == 'png' || videoMeta.tags?.alpha_mode == '1')
 
     if ((videoMeta.codec_name === 'gif' || isAlpha) && videoMeta.width < 512 && videoMeta.height < 512 && !(isEmoji)) {
@@ -515,12 +515,12 @@ async function convertToWebmSticker(input, frameType, forceCrop, isEmoji, output
                 console.error('Error probing output file:', probeErr.message);
                 return reject(probeErr);
               }
-              
+
               if (!metadata || !metadata.format) {
                 console.error('Invalid metadata returned from ffprobe');
                 return reject(new Error('Invalid output metadata'));
               }
-              
+
               console.log('File size:', (metadata.format.size / 1024).toFixed(2), 'kb');
               resolve({
                 output,

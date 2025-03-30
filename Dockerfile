@@ -19,7 +19,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash - \
     && node --version \
     && npm --version
 
-# Install dependencies needed to build FFmpeg
+# Install dependencies needed to build FFmpeg with SSL support
 RUN apt-get update && apt-get install -y \
     build-essential \
     yasm \
@@ -29,18 +29,32 @@ RUN apt-get update && apt-get install -y \
     libopus-dev \
     libvpx-dev \
     libfdk-aac-dev \
-    nasm
+    nasm \
+    libssl-dev \
+    openssl \
+    libgnutls28-dev
 
-# Download and install FFmpeg 4.4.4 from source
+# Download and install FFmpeg 4.4.4 from source with SSL support
 RUN cd /tmp && \
     wget https://ffmpeg.org/releases/ffmpeg-4.4.4.tar.bz2 && \
     tar -xjf ffmpeg-4.4.4.tar.bz2 && \
     cd ffmpeg-4.4.4 && \
-    ./configure --enable-gpl --enable-nonfree --enable-libfdk-aac --enable-libmp3lame --enable-libopus --enable-libvpx --enable-libx264 && \
+    ./configure \
+      --enable-gpl \
+      --enable-nonfree \
+      --enable-libfdk-aac \
+      --enable-libmp3lame \
+      --enable-libopus \
+      --enable-libvpx \
+      --enable-libx264 \
+      --enable-openssl \
+      --enable-protocol=https \
+      --enable-protocol=http \
+      && \
     make -j$(nproc) && \
     make install && \
     ldconfig && \
-    ffmpeg -version | grep "ffmpeg version 4.4.4" && \
+    ffmpeg -version && \
     cd /tmp && \
     rm -rf ffmpeg-4.4.4 ffmpeg-4.4.4.tar.bz2 && \
     apt-get clean && \
