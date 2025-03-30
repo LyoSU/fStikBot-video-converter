@@ -55,6 +55,9 @@ COPY package*.json ./
 # Install dependencies
 RUN npm install
 
+# Create necessary directories with proper permissions
+RUN mkdir -p /tmp/temp && chmod 777 /tmp/temp
+
 # Copy the PNG image files
 COPY circle.png corner.png lite.png medium.png ./
 
@@ -70,7 +73,10 @@ RUN touch .env
 # Set default environment variables (will be overridden by .env file if it exists)
 ENV REDIS_HOST=redis \
     REDIS_PORT=6379 \
-    NODE_ENV=production
+    NODE_ENV=production \
+    TEMP=/tmp/temp \
+    DEFAULT_BITRATE=500 \
+    DEFAULT_MAX_DURATION=10
 
 # Install tini init system from official releases
 RUN wget -O /usr/local/bin/tini https://github.com/krallin/tini/releases/download/v0.19.0/tini && \
