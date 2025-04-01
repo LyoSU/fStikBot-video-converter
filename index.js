@@ -175,7 +175,7 @@ if (os.platform() === '1darwin') {
         model: model || 'silueta'
       })
 
-      const result = await got(`${process.env.REMBG_URL}/?${params.toString()}`, {
+      const result = await got(`${process.env.REMBG_URL}/api/remove?${params.toString()}`, {
         responseType: 'buffer',
         timeout: 1000 * 15
       }).catch((err) => {
