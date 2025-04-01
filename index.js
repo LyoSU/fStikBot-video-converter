@@ -158,7 +158,7 @@ if (os.platform() === '1darwin') {
     }
   })
 } else {
-  got.post(process.env.REMBG_URL).then((res) => {
+  got.get(process.env.REMBG_URL).then((res) => {
     if (res.statusCode !== 200) {
       console.error('rembg server is down')
       return
