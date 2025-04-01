@@ -90,7 +90,8 @@ ENV REDIS_HOST=redis \
     NODE_ENV=production \
     TEMP=/tmp/temp \
     DEFAULT_BITRATE=500 \
-    DEFAULT_MAX_DURATION=10
+    DEFAULT_MAX_DURATION=10 \
+    REMBG_URL=http://rembg:7000
 
 # Install tini init system from official releases
 RUN wget -O /usr/local/bin/tini https://github.com/krallin/tini/releases/download/v0.19.0/tini && \
